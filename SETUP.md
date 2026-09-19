@@ -97,15 +97,13 @@ The `deferred-tools` extension deactivates the Firecrawl tools, the background t
 
 ## Shared agent concurrency
 
-Workflow agents and Pi, Claude, and Codex subagents share a budget within each Pi process. The default is four running agents. Set `maxRunning` to an integer from 1 to 32 in `~/.pi/agent/concurrency.json` (or under `PI_CODING_AGENT_DIR`):
+Workflow agents and Pi, Claude, and Codex subagents share one running-agent budget per Pi process. The default is four. Set `maxRunning` (1 to 32) in `~/.pi/agent/concurrency.json` (or under `PI_CODING_AGENT_DIR`):
 
 ```json
 { "maxRunning": 4 }
 ```
 
-Workflow calls wait in arrival order when capacity is full; cancelled calls leave the queue. Subagent spawns and idle restarts report a capacity error. Steering a running subagent and its queued follow-ups keep the same slot. Each workflow and subagent manager also retains its existing limit of four.
-
-Changes apply on the next admission check. Lowering the limit lets existing work finish before admitting more. Separate Pi processes have separate budgets.
+Workflow agents wait in arrival order when the budget is full, and cancelled calls leave the queue. Subagent spawns and idle restarts fail with a capacity error instead of waiting. Each workflow run also keeps its own fan-out limit of four. Edits to the file apply on the next admission, and lowering the limit lets running agents finish.
 
 ## Keep private state outside the package
 

@@ -193,7 +193,7 @@ test("the global concurrency cap includes by-the-way sessions", async () => {
           origin: "btw",
         }),
       ),
-      /Max 4 subagents/,
+      /agent limit \(4\)/,
     );
   });
 });
@@ -211,7 +211,7 @@ test("the concurrency cap rejects a fifth running subagent", async () => {
     assert.equal(spawns.length, 4);
     await assert.rejects(
       runTool(runtime, manager.spawn("codex", task("Task 5"))),
-      /Max 4 subagents/,
+      /agent limit \(4\)/,
     );
   });
 });
@@ -247,7 +247,7 @@ test("idle restarts respect the concurrency cap", async () => {
     // Restarting the settled one would be a fifth concurrent run.
     await assert.rejects(
       runTool(runtime, manager.send(settled.id, "go again")),
-      /Max 4 subagents/,
+      /agent limit \(4\)/,
     );
     assert.equal(manager.view.get(settled.id)?.status, "done");
   });

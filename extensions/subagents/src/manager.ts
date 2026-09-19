@@ -1,4 +1,3 @@
-import { getAgentConcurrency } from "../../shared/agent-concurrency.ts";
 /**
  * SubagentManager — owns the registry of running/finished subagents.
  *
@@ -41,6 +40,7 @@ import type {
   SubagentStatus,
   TranscriptItem,
 } from "./domain.ts";
+import { getAgentConcurrency } from "../../shared/agent-concurrency.ts";
 import {
   BackendUnavailableError,
   ConcurrencyLimitError,
@@ -48,7 +48,6 @@ import {
   SpawnError,
 } from "./domain.ts";
 
-export const MAX_RUNNING = 4;
 export const MAX_TRACKED = 64;
 const STOP_TIMEOUT_MS = 5_000;
 /** Extra close budget for entries whose finalizer also runs git worktree cleanup. */
@@ -233,7 +232,6 @@ const makeManager = Effect.gen(function* () {
   const cleanups = new Set<Fiber.Fiber<unknown>>();
   let modelCounter = 0;
   let btwCounter = 0;
-  let reserved = 0;
   let disposed = false;
   let onSettled:
     ((snap: SubagentSnapshot, consumed: boolean) => void) | undefined;
@@ -272,10 +270,13 @@ const makeManager = Effect.gen(function* () {
     });
   });
 
-  const runningCount = () =>
-    [...entries.values()].filter(
-      (e) => e.snapshot.status === "running" || e.restarting === true,
-    ).length;
+  const sharedPool = () => {
+    try {
+      return getAgentConcurrency();
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  };
 
   const addInterest = (ids: ReadonlyArray<string>) => {
     for (const id of ids) waitInterest.set(id, (waitInterest.get(id) ?? 0) + 1);
@@ -488,9 +489,8 @@ const makeManager = Effect.gen(function* () {
   const spawn = (backendName: BackendName, task: SpawnTask) =>
     Effect.gen(function* () {
       let releaseShared: (() => void) | undefined;
-      let transferred = false;
       // Reserve synchronously (before the first yield inside doSpawn) so
-      // parallel tool calls cannot race past the global cap.
+      // parallel tool calls cannot race past the shared cap.
       yield* Effect.suspend(
         (): Effect.Effect<void, SpawnError | ConcurrencyLimitError> => {
           if (disposed) {
@@ -498,23 +498,14 @@ const makeManager = Effect.gen(function* () {
               message: "Subagent manager is shutting down.",
             });
           }
-          if (runningCount() + reserved >= MAX_RUNNING) {
-            return new ConcurrencyLimitError({
-              message: `Max ${MAX_RUNNING} subagents can run concurrently. Wait for one to finish before spawning another.`,
-            });
-          }
-          let pool;
-          try {
-            pool = getAgentConcurrency();
-          } catch (error) {
-            return new SpawnError({ message: String(error) });
-          }
+          const pool = sharedPool();
+          if (pool instanceof Error)
+            return new SpawnError({ message: pool.message });
           releaseShared = pool.tryAcquire();
           if (!releaseShared)
             return new ConcurrencyLimitError({
               message: `Shared agent limit (${pool.snapshot.limit}) reached. Wait for an agent to finish.`,
             });
-          reserved++;
           return Effect.void;
         },
       );
@@ -591,7 +582,7 @@ const makeManager = Effect.gen(function* () {
         };
         worktreeOwner.snapshot = entry.snapshot;
         entries.set(id, entry);
-        transferred = true;
+        releaseShared = undefined;
 
         // Pump: fold the event stream into the snapshot. Tied to the entry
         // scope, so closing the scope stops it. If the stream ends while the
@@ -620,8 +611,7 @@ const makeManager = Effect.gen(function* () {
       return yield* doSpawn.pipe(
         Effect.ensuring(
           Effect.sync(() => {
-            if (!transferred) releaseShared?.();
-            reserved--;
+            releaseShared?.();
             notify();
           }),
         ),
@@ -743,17 +733,9 @@ const makeManager = Effect.gen(function* () {
       // must respect the same cap as spawn. Steering an already-running one
       // does not consume additional capacity.
       if (entry.snapshot.status !== "running" && !entry.restarting) {
-        if (runningCount() + reserved >= MAX_RUNNING) {
-          return new SendError({
-            message: `Max ${MAX_RUNNING} subagents can run concurrently; restarting "${id}" would exceed that.`,
-          });
-        }
-        let pool;
-        try {
-          pool = getAgentConcurrency();
-        } catch (error) {
-          return new SendError({ message: String(error) });
-        }
+        const pool = sharedPool();
+        if (pool instanceof Error)
+          return new SendError({ message: pool.message });
         const release = pool.tryAcquire();
         if (!release)
           return new SendError({

@@ -40,7 +40,7 @@ export function loadAgentLimit(agentDir = getAgentDir()) {
   }
 }
 
-/** FIFO capacity shared by all agent producers in this Pi process. */
+/** FIFO capacity pool; waiters are granted in arrival order. */
 export class AgentConcurrency {
   private active = 0;
   private limit = DEFAULT_AGENT_LIMIT;
