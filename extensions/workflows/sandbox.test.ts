@@ -186,3 +186,10 @@ test("bridge failures stay in the guest realm and oversized results fail", async
   );
   await assert.rejects(run('return "x".repeat(2 * 1024 * 1024);'), /IPC limit/);
 });
+
+test("phase updates cannot flood the host IPC queue", async () => {
+  await assert.rejects(
+    run('for (let i = 0; i < 1000; i++) phase("step");'),
+    /phase update budget/,
+  );
+});

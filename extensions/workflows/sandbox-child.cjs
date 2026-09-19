@@ -142,6 +142,7 @@ let runtime;
 let workflowPromise;
 let deadline = 0;
 let finished = false;
+let phaseUpdates = 0;
 const pendingAgents = new Map();
 
 function send(message) {
@@ -234,6 +235,8 @@ async function run(source, argsJson) {
     const kind = context.getString(kindHandle);
     const payloadJson = context.getString(payloadHandle);
     if (kind === "phase") {
+      if (++phaseUpdates > 256)
+        throw new Error("Workflow exceeded its phase update budget");
       if (Buffer.byteLength(payloadJson) > 4096)
         throw new Error("Phase exceeds IPC limit");
       send({ kind, payloadJson });

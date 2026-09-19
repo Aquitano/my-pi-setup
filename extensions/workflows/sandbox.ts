@@ -144,6 +144,7 @@ export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
     const requestIds = new Set<number>();
     const activeAgentRequests = new Map<number, AbortController>();
     let requestCount = 0;
+    let phaseUpdates = 0;
     let finished = false;
 
     const cleanup = () => {
@@ -192,6 +193,10 @@ export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
         return;
       }
       if (raw.kind === "phase") {
+        if (++phaseUpdates > 256) {
+          finish(new Error("Workflow exceeded its phase update budget"));
+          return;
+        }
         if (
           typeof raw.payloadJson !== "string" ||
           byteLength(raw.payloadJson) > 4096
