@@ -8,11 +8,16 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { BackendRegistry, type SubagentBackend } from "./src/backend.ts";
 import { piBackend } from "./src/backends/pi.ts";
 import { makeStubBackend } from "./src/backends/stub.ts";
-import type { BackendName, ParentContext, SpawnTask } from "./src/domain.ts";
+import type {
+  BackendName,
+  ParentContext,
+  SpawnTask,
+  SubagentEvent,
+} from "./src/domain.ts";
 import {
   SubagentManager,
   SubagentManagerLive,
@@ -338,4 +343,51 @@ test("queued native follow-ups retain shared capacity between turns", async () =
     await completed;
     assert.deepEqual(counts, [1, 0]);
   });
+});
+
+test("a session that closes with a queued follow-up releases its slot and settles waiters", async () => {
+  const { getAgentConcurrency } =
+    await import("../shared/agent-concurrency.ts");
+  const events: SubagentEvent[] = [
+    { _tag: "RunStarted" },
+    { _tag: "QueueChanged", queued: [{ text: "later", kind: "follow-up" }] },
+    { _tag: "RunSettled", outcome: { _tag: "Completed", finalText: "first" } },
+  ];
+  const closingBackend: SubagentBackend = {
+    name: "codex",
+    capabilities: {
+      steering: true,
+      modelSelection: false,
+      reasoningEffort: false,
+    },
+    available: Effect.succeed(true),
+    spawn: () =>
+      Effect.succeed({
+        meta: Effect.succeed({ backend: "codex" as const }),
+        events: Stream.fromIterable(events),
+        send: () => Effect.void,
+        interrupt: Effect.void,
+      }),
+  };
+  const runtime = ManagedRuntime.make(
+    SubagentManagerLive.pipe(
+      Layer.provide(
+        Layer.sync(BackendRegistry, () => new Map([["codex", closingBackend]])),
+      ),
+    ),
+  );
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const agent = await runTool(runtime, manager.spawn("codex", task("First")));
+    await runTool(runtime, manager.waitFor([agent.id]));
+    const settled = manager.view.get(agent.id);
+    assert.equal(settled?.status, "done");
+    assert.equal(settled?.finalText, "first");
+    assert.deepEqual(settled?.queued, []);
+    assert.equal(getAgentConcurrency().snapshot.active, 0);
+    const [cancelled] = await runTool(runtime, manager.cancel([agent.id]));
+    assert.equal(cancelled?.cancelled, false);
+  } finally {
+    await runtime.dispose();
+  }
 });

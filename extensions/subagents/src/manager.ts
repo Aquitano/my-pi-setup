@@ -592,13 +592,18 @@ const makeManager = Effect.gen(function* () {
         ).pipe(
           Effect.ensuring(
             Effect.sync(() => {
-              releaseCapacity(entry);
               if (entry.snapshot.status === "running") {
                 settle(entry, {
                   _tag: "Failed",
                   errorText: "Backend event stream ended unexpectedly",
                 });
+              } else if (entry.restarting) {
+                // A queued follow-up or idle restart can no longer start.
+                entry.restarting = false;
+                entry.snapshot.queued = [];
+                notify(entry.snapshot.id);
               }
+              releaseCapacity(entry);
             }),
           ),
         );
