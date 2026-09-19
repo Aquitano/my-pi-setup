@@ -1,3 +1,4 @@
+import { getAgentConcurrency } from "../../shared/agent-concurrency.ts";
 /**
  * SubagentManager — owns the registry of running/finished subagents.
  *
@@ -110,6 +111,7 @@ interface Entry {
   /** Idle restart dispatched but RunStarted not folded yet; counts as running
    * so concurrent restarts cannot race past the cap. */
   restarting?: boolean;
+  releaseCapacity?: () => void;
 }
 
 // --- Read model ----------------------------------------------------------------
@@ -286,8 +288,15 @@ const makeManager = Effect.gen(function* () {
     }
   };
 
+  const releaseCapacity = (entry: Entry) => {
+    entry.releaseCapacity?.();
+    entry.releaseCapacity = undefined;
+  };
   const closeEntryScope = (entry: Entry) =>
-    Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+    Scope.close(entry.scope, Exit.void).pipe(
+      Effect.ignore,
+      Effect.ensuring(Effect.sync(() => releaseCapacity(entry))),
+    );
 
   const closeTimeout = (entry: Entry) =>
     entry.snapshot.worktree
@@ -299,7 +308,9 @@ const makeManager = Effect.gen(function* () {
     const candidates = [...entries.values()]
       .filter(
         (e) =>
-          e.snapshot.status !== "running" && !waitInterest.has(e.snapshot.id),
+          e.snapshot.status !== "running" &&
+          !e.restarting &&
+          !waitInterest.has(e.snapshot.id),
       )
       .sort(
         (a, b) =>
@@ -317,8 +328,8 @@ const makeManager = Effect.gen(function* () {
 
   const settle = (entry: Entry, outcome: RunOutcome) => {
     const s = entry.snapshot;
+    if (s.status !== "running" && !entry.restarting) return;
     entry.restarting = false;
-    if (s.status !== "running") return;
     s.settledAt = Date.now();
     switch (outcome._tag) {
       case "Completed":
@@ -347,7 +358,14 @@ const makeManager = Effect.gen(function* () {
     s.liveAssistant = undefined;
     entry.liveToolMap.clear();
     s.liveTools = [];
-    s.queued = [];
+    // Native backends may start a queued follow-up without another send().
+    // Keep its reservation until that run settles or the session closes.
+    if (s.queued.length === 0 || outcome._tag === "Interrupted") {
+      releaseCapacity(entry);
+      s.queued = [];
+    } else {
+      entry.restarting = true;
+    }
     const consumed = (waitInterest.get(s.id) ?? 0) > 0;
     notify(s.id);
     try {
@@ -469,6 +487,8 @@ const makeManager = Effect.gen(function* () {
 
   const spawn = (backendName: BackendName, task: SpawnTask) =>
     Effect.gen(function* () {
+      let releaseShared: (() => void) | undefined;
+      let transferred = false;
       // Reserve synchronously (before the first yield inside doSpawn) so
       // parallel tool calls cannot race past the global cap.
       yield* Effect.suspend(
@@ -483,6 +503,17 @@ const makeManager = Effect.gen(function* () {
               message: `Max ${MAX_RUNNING} subagents can run concurrently. Wait for one to finish before spawning another.`,
             });
           }
+          let pool;
+          try {
+            pool = getAgentConcurrency();
+          } catch (error) {
+            return new SpawnError({ message: String(error) });
+          }
+          releaseShared = pool.tryAcquire();
+          if (!releaseShared)
+            return new ConcurrencyLimitError({
+              message: `Shared agent limit (${pool.snapshot.limit}) reached. Wait for an agent to finish.`,
+            });
           reserved++;
           return Effect.void;
         },
@@ -556,9 +587,11 @@ const makeManager = Effect.gen(function* () {
           session,
           scope,
           liveToolMap: new Map(),
+          releaseCapacity: releaseShared,
         };
         worktreeOwner.snapshot = entry.snapshot;
         entries.set(id, entry);
+        transferred = true;
 
         // Pump: fold the event stream into the snapshot. Tied to the entry
         // scope, so closing the scope stops it. If the stream ends while the
@@ -568,6 +601,7 @@ const makeManager = Effect.gen(function* () {
         ).pipe(
           Effect.ensuring(
             Effect.sync(() => {
+              releaseCapacity(entry);
               if (entry.snapshot.status === "running") {
                 settle(entry, {
                   _tag: "Failed",
@@ -586,6 +620,7 @@ const makeManager = Effect.gen(function* () {
       return yield* doSpawn.pipe(
         Effect.ensuring(
           Effect.sync(() => {
+            if (!transferred) releaseShared?.();
             reserved--;
             notify();
           }),
@@ -602,9 +637,12 @@ const makeManager = Effect.gen(function* () {
       addInterest(unique);
       const loop = Effect.gen(function* () {
         while (true) {
-          const pending = unique.filter(
-            (id) => entries.get(id)?.snapshot.status === "running",
-          );
+          const pending = unique.filter((id) => {
+            const entry = entries.get(id);
+            return (
+              entry?.snapshot.status === "running" || entry?.restarting === true
+            );
+          });
           if (pending.length === 0) return;
           onPending?.(pending);
           yield* nextChange;
@@ -623,7 +661,7 @@ const makeManager = Effect.gen(function* () {
   /** Interrupt one running entry, force-closing its scope after 5s. */
   const abortEntry = (entry: Entry) =>
     Effect.gen(function* () {
-      if (entry.snapshot.status !== "running") return;
+      if (entry.snapshot.status !== "running" && !entry.restarting) return;
       const graceful = yield* entry.session.interrupt.pipe(
         Effect.timeout(STOP_TIMEOUT_MS),
         Effect.result,
@@ -653,7 +691,8 @@ const makeManager = Effect.gen(function* () {
       const running = unique
         .map((id) => entries.get(id))
         .filter(
-          (entry): entry is Entry => entry?.snapshot.status === "running",
+          (entry): entry is Entry =>
+            entry?.snapshot.status === "running" || entry?.restarting === true,
         );
       const runningIds = running.map((entry) => entry.snapshot.id);
       // Mark consumed before interrupting so cancellation does not also
@@ -663,7 +702,11 @@ const makeManager = Effect.gen(function* () {
         yield* Effect.forEach(running, abortEntry, {
           concurrency: "unbounded",
         });
-        while (running.some((entry) => entry.snapshot.status === "running")) {
+        while (
+          running.some(
+            (entry) => entry.snapshot.status === "running" || entry.restarting,
+          )
+        ) {
           yield* nextChange;
         }
       });
@@ -699,12 +742,24 @@ const makeManager = Effect.gen(function* () {
       // Restarting a settled subagent occupies a running slot again, so it
       // must respect the same cap as spawn. Steering an already-running one
       // does not consume additional capacity.
-      if (entry.snapshot.status !== "running") {
+      if (entry.snapshot.status !== "running" && !entry.restarting) {
         if (runningCount() + reserved >= MAX_RUNNING) {
           return new SendError({
             message: `Max ${MAX_RUNNING} subagents can run concurrently; restarting "${id}" would exceed that.`,
           });
         }
+        let pool;
+        try {
+          pool = getAgentConcurrency();
+        } catch (error) {
+          return new SendError({ message: String(error) });
+        }
+        const release = pool.tryAcquire();
+        if (!release)
+          return new SendError({
+            message: `Shared agent limit (${pool.snapshot.limit}) reached; cannot restart "${id}".`,
+          });
+        entry.releaseCapacity = release;
         // Occupy the slot synchronously: the RunStarted that flips status
         // arrives via the async pump, and two concurrent restarts must not
         // both pass the check in that window. Cleared by RunStarted/settle,
@@ -714,6 +769,7 @@ const makeManager = Effect.gen(function* () {
           Effect.onError(() =>
             Effect.sync(() => {
               entry.restarting = false;
+              releaseCapacity(entry);
             }),
           ),
         );

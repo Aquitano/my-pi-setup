@@ -1,3 +1,5 @@
+import { getAgentConcurrency } from "../shared/agent-concurrency.ts";
+
 const DEFAULT_CONCURRENCY = 4;
 export const MAX_AGENT_CALLS = 32;
 export const RUN_SHUTDOWN_TIMEOUT_MS = 8_000;
@@ -134,9 +136,12 @@ export class RunController {
       else if (invocationSignal?.aborted) onInvocationAbort();
 
       let acquired = false;
+      let releaseShared: (() => void) | undefined;
       try {
         await this.semaphore.acquire(taskAbort.signal);
         acquired = true;
+        if (taskAbort.signal.aborted) throw abortError(taskAbort.signal);
+        releaseShared = await getAgentConcurrency().acquire(taskAbort.signal);
         if (taskAbort.signal.aborted) throw abortError(taskAbort.signal);
         const result = await task(taskAbort.signal);
         if (invocationSignal?.aborted) throw abortError(invocationSignal);
@@ -144,6 +149,7 @@ export class RunController {
       } finally {
         this.signal.removeEventListener("abort", onRunAbort);
         invocationSignal?.removeEventListener("abort", onInvocationAbort);
+        releaseShared?.();
         if (acquired) this.semaphore.release();
       }
     })();

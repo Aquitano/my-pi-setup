@@ -274,3 +274,68 @@ test("send steers an idle subagent into another turn", async () => {
     assert.match(afterSecond?.finalText ?? "", /Second turn/);
   });
 });
+
+test("workflow agents and subagents share capacity and release it on shutdown", async () => {
+  const { RunController } = await import("../workflows/controller.ts");
+  const { getAgentConcurrency } =
+    await import("../shared/agent-concurrency.ts");
+  const controller = new RunController();
+  const pool = getAgentConcurrency();
+  const work = Array.from({ length: 3 }, () =>
+    controller.schedule(
+      (signal) =>
+        new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        ),
+    ),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(pool.snapshot.active, 3);
+  try {
+    await withManager(async (manager, runtime) => {
+      const agent = await runTool(
+        runtime,
+        manager.spawn("claude", task("Use the remaining slot")),
+      );
+      assert.equal(pool.snapshot.active, 4);
+      await assert.rejects(
+        runTool(runtime, manager.spawn("codex", task("Over budget"))),
+        /Shared agent limit/,
+      );
+      await runTool(runtime, manager.cancel([agent.id]));
+      assert.equal(pool.snapshot.active, 3);
+      await runTool(
+        runtime,
+        manager.send(agent.id, "Restart in the freed slot"),
+      );
+      assert.equal(pool.snapshot.active, 4);
+    });
+    assert.equal(pool.snapshot.active, 3);
+  } finally {
+    await controller.settle({ abort: true });
+    await Promise.allSettled(work);
+  }
+  assert.equal(pool.snapshot.active, 0);
+});
+
+test("queued native follow-ups retain shared capacity between turns", async () => {
+  const { getAgentConcurrency } =
+    await import("../shared/agent-concurrency.ts");
+  const pool = getAgentConcurrency();
+  await withManager(async (manager, runtime) => {
+    const counts: number[] = [];
+    const completed = new Promise<void>((resolve) => {
+      manager.view.setOnSettled(() => {
+        counts.push(pool.snapshot.active);
+        if (counts.length === 2) resolve();
+      });
+    });
+    const agent = await runTool(
+      runtime,
+      manager.spawn("codex", task("First turn")),
+    );
+    await runTool(runtime, manager.send(agent.id, "Queued follow-up"));
+    await completed;
+    assert.deepEqual(counts, [1, 0]);
+  });
+});
