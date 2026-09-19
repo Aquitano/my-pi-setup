@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { openModelPicker, openReasoningPicker } from "../summaries/src/ui.ts";
+import { chooseSummaryModel } from "../summaries/src/ui.ts";
 import { openSetup } from "./menu.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -16,22 +16,7 @@ export default function (pi: ExtensionAPI) {
       }
       editing = true;
       try {
-        await openSetup(ctx.ui, async (current) => {
-          const model = await openModelPicker(ctx, current);
-          if (!model) return undefined;
-          const reasoning = await openReasoningPicker(
-            ctx,
-            model,
-            current.reasoning,
-          );
-          if (!reasoning) return undefined;
-          return {
-            ...current,
-            provider: model.provider,
-            model: model.id,
-            reasoning,
-          };
-        });
+        await openSetup(ctx.ui, (current) => chooseSummaryModel(ctx, current));
       } finally {
         editing = false;
       }

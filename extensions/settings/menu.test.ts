@@ -47,9 +47,9 @@ test("closing or cancelling a picker writes nothing", async () => {
 test("settings menu persists permissions, live capacity, and recap preferences", async () => {
   const { ui, notices } = menu([
     "Claude permissions",
-    "Don't ask",
+    "dontAsk",
     "Codex permissions",
-    "Sandbox",
+    "sandbox",
     "Concurrent agents",
     "2",
     "Run recaps",

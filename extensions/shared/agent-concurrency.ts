@@ -1,7 +1,7 @@
-import { writeUserConfig } from "./user-config.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { writeUserConfig } from "./user-config.ts";
 
 export const DEFAULT_AGENT_LIMIT = 4;
 

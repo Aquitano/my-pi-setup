@@ -57,9 +57,7 @@ If you do not use Firecrawl, disable `firecrawl-search` with `pi config`.
 
 ## Configure settings in Pi
 
-Run `/setup` in the Pi TUI to change Claude/Codex permission modes, the shared agent limit, run recaps, and the recap model and reasoning level. Each completed choice saves immediately; Escape cancels the current picker. The menu shows current values and the running/waiting agent counts when opened.
-
-Permission changes apply to new subagents. Concurrency changes apply immediately to new admissions; existing agents can finish. Recap changes apply to future completed runs. Settings are stored in your agent directory, outside the installed package. `/summary-model` remains available and preserves the recap on/off setting.
+Run `/setup` in the Pi TUI to change Claude and Codex permission modes, the shared agent limit, and run recaps (on/off, model, reasoning level). Each choice saves immediately, and Escape cancels the current picker. Permission changes apply to new subagents, limit changes to the next admission, and recap changes to future completed runs. Settings live in your agent directory, outside the installed package. `/summary-model` still works and keeps the recap on/off setting.
 
 ## Configure subagent permissions
 

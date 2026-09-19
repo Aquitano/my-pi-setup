@@ -1,8 +1,8 @@
-import { writeUserConfig } from "../../shared/user-config.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { writeUserConfig } from "../../shared/user-config.ts";
 
 export const CLAUDE_MODES = [
   "auto",

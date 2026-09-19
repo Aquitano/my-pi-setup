@@ -15,21 +15,39 @@ import {
   type SummaryConfig,
 } from "../summaries/src/config.ts";
 
+type SetupUi = Pick<ExtensionContext["ui"], "select" | "notify">;
+
 const claudeChoices = {
-  auto: "Auto — automatic approval decisions",
-  acceptEdits: "Accept edits — automatically approve file edits",
-  dontAsk: "Don't ask — deny requests that need approval",
-  plan: "Plan — planning permissions",
-  bypassPermissions: "Bypass permissions — unrestricted access",
+  auto: "auto · automatic approval decisions",
+  acceptEdits: "acceptEdits · approve file edits automatically",
+  dontAsk: "dontAsk · deny requests that need approval",
+  plan: "plan · planning permissions only",
+  bypassPermissions: "bypassPermissions · unrestricted access",
 } satisfies Record<(typeof CLAUDE_MODES)[number], string>;
 const codexChoices = {
-  auto: "Auto — workspace sandbox and automatic approval review",
-  sandbox: "Sandbox — workspace writes, no escalation",
-  "full-access": "Full access — no sandbox or approval prompts",
+  auto: "auto · workspace sandbox with automatic approval review",
+  sandbox: "sandbox · workspace writes, no escalation",
+  "full-access": "full-access · no sandbox or approval prompts",
 } satisfies Record<(typeof CODEX_MODES)[number], string>;
+const limitChoices = Array.from({ length: 32 }, (_, index) =>
+  String(index + 1),
+);
+
+async function pick<const T extends string>(
+  ui: SetupUi,
+  title: string,
+  choices: Record<T, string>,
+) {
+  const keys = Object.keys(choices) as T[];
+  const selected = await ui.select(
+    title,
+    keys.map((key) => choices[key]),
+  );
+  return keys.find((key) => choices[key] === selected);
+}
 
 export async function openSetup(
-  ui: Pick<ExtensionContext["ui"], "select" | "notify">,
+  ui: SetupUi,
   chooseSummary: (current: SummaryConfig) => Promise<SummaryConfig | undefined>,
 ) {
   while (true) {
@@ -37,78 +55,72 @@ export async function openSetup(
       const permissions = loadSubagentPermissions();
       const summary = loadSummaryConfig();
       const pool = getAgentConcurrency().snapshot;
-      const options = [
-        `Claude permissions · ${permissions.claude}`,
-        `Codex permissions · ${permissions.codex}`,
-        `Concurrent agents · ${pool.limit} (${pool.active} running, ${pool.waiting} waiting)`,
-        `Run recaps · ${summary.enabled === false ? "off" : "on"}`,
-        `Recap model · ${summary.provider}/${summary.model} · ${summary.reasoning}`,
-        "Close",
+      const items = [
+        {
+          label: `Claude permissions · ${permissions.claude}`,
+          edit: async () => {
+            const mode = await pick(
+              ui,
+              "Claude permissions (applies to new subagents)",
+              claudeChoices,
+            );
+            if (!mode) return false;
+            await saveSubagentPermissions({ ...permissions, claude: mode });
+            return true;
+          },
+        },
+        {
+          label: `Codex permissions · ${permissions.codex}`,
+          edit: async () => {
+            const mode = await pick(
+              ui,
+              "Codex permissions (applies to new subagents)",
+              codexChoices,
+            );
+            if (!mode) return false;
+            await saveSubagentPermissions({ ...permissions, codex: mode });
+            return true;
+          },
+        },
+        {
+          label: `Concurrent agents · ${pool.limit} (${pool.active} running, ${pool.waiting} waiting)`,
+          edit: async () => {
+            const limit = await ui.select(
+              "Shared agent limit (running agents finish first)",
+              limitChoices,
+            );
+            if (!limit) return false;
+            await saveAgentLimit(Number(limit));
+            return true;
+          },
+        },
+        {
+          label: `Run recaps · ${summary.enabled === false ? "off" : "on"}`,
+          edit: async () => {
+            const choice = await ui.select(
+              "Run recaps (applies to future completed runs)",
+              ["On", "Off"],
+            );
+            if (!choice) return false;
+            await saveSummaryConfig({ ...summary, enabled: choice === "On" });
+            return true;
+          },
+        },
+        {
+          label: `Recap model · ${summary.provider}/${summary.model} · ${summary.reasoning}`,
+          edit: async () => {
+            const config = await chooseSummary(summary);
+            if (!config) return false;
+            await saveSummaryConfig(config);
+            return true;
+          },
+        },
       ];
-      const selection = await ui.select("Pi setup", options);
-      if (selection === undefined || selection === "Close") return;
-      switch (options.indexOf(selection)) {
-        case 0: {
-          const selected = await ui.select(
-            "Claude permissions — applies to new subagents",
-            CLAUDE_MODES.map((mode) => claudeChoices[mode]),
-          );
-          const mode = CLAUDE_MODES.find(
-            (mode) => claudeChoices[mode] === selected,
-          );
-          if (!mode) continue;
-          await saveSubagentPermissions({
-            ...loadSubagentPermissions(),
-            claude: mode,
-          });
-          break;
-        }
-        case 1: {
-          const selected = await ui.select(
-            "Codex permissions — applies to new subagents",
-            CODEX_MODES.map((mode) => codexChoices[mode]),
-          );
-          const mode = CODEX_MODES.find(
-            (mode) => codexChoices[mode] === selected,
-          );
-          if (!mode) continue;
-          await saveSubagentPermissions({
-            ...loadSubagentPermissions(),
-            codex: mode,
-          });
-          break;
-        }
-        case 2: {
-          const selected = await ui.select(
-            "Shared agent limit — existing work can finish",
-            Array.from({ length: 32 }, (_, index) => String(index + 1)),
-          );
-          if (selected === undefined) continue;
-          await saveAgentLimit(Number(selected));
-          break;
-        }
-        case 3: {
-          const selected = await ui.select(
-            "Run recaps — applies to future completed runs",
-            ["On", "Off"],
-          );
-          if (selected === undefined) continue;
-          await saveSummaryConfig({
-            ...loadSummaryConfig(),
-            enabled: selected === "On",
-          });
-          break;
-        }
-        case 4: {
-          const config = await chooseSummary(summary);
-          if (!config) continue;
-          await saveSummaryConfig({ ...loadSummaryConfig(), ...config });
-          break;
-        }
-        default:
-          return;
-      }
-      ui.notify("Setting saved.", "info");
+      const labels = items.map((item) => item.label);
+      const selected = await ui.select("Pi setup", [...labels, "Close"]);
+      const item = items[labels.indexOf(selected ?? "")];
+      if (!item) return;
+      if (await item.edit()) ui.notify("Setting saved.", "info");
     } catch (error) {
       ui.notify(
         `Could not update settings: ${error instanceof Error ? error.message : String(error)}`,
