@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
@@ -101,17 +103,33 @@ export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
   }
 
   return new Promise<unknown>((resolve, reject) => {
-    const workerPath = fileURLToPath(
-      new URL("./sandbox-child.cjs", import.meta.url),
+    const workerPath = realpathSync(
+      fileURLToPath(new URL("./sandbox-child.cjs", import.meta.url)),
+    );
+    const require = createRequire(import.meta.url);
+    const runtimePaths = [
+      realpathSync(require.resolve("quickjs-emscripten-core")),
+      realpathSync(
+        require.resolve("@jitl/quickjs-singlefile-cjs-release-sync"),
+      ),
+    ];
+    runtimePaths.push(
+      realpathSync(
+        createRequire(runtimePaths[0]!).resolve("@jitl/quickjs-ffi-types"),
+      ),
     );
     const child = spawn(
       process.execPath,
       [
         "--permission",
         `--allow-fs-read=${path.dirname(workerPath)}`,
+        ...runtimePaths.map(
+          (entry) => `--allow-fs-read=${path.dirname(path.dirname(entry))}`,
+        ),
         "--max-old-space-size=128",
         "--stack-size=2048",
         workerPath,
+        ...runtimePaths,
       ],
       {
         cwd: options.cwd,

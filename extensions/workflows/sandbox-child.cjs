@@ -1,33 +1,10 @@
 "use strict";
 
-// This file is launched by sandbox.ts in Node permission mode. It deliberately
-// has no filesystem/network/child-process permissions and receives workflow
-// source only over a validated IPC channel.
-const vm = require("node:vm");
-const sendIpc =
-  typeof process.send === "function" ? process.send.bind(process) : undefined;
-// If a future V8 escape exposes `process`, remove the convenient bridges to
-// builtins, native bindings, parent signalling, and addons before any workflow
-// source is compiled. The parent still enforces the authenticated IPC protocol.
-for (const capability of [
-  "getBuiltinModule",
-  "binding",
-  "_linkedBinding",
-  "dlopen",
-  "kill",
-  "abort",
-  "send",
-]) {
-  try {
-    Object.defineProperty(process, capability, {
-      value: undefined,
-      writable: false,
-      configurable: false,
-    });
-  } catch {
-    // The VM boundary and permission mode remain mandatory controls.
-  }
-}
+// The only objects shared with workflows are QuickJS values in WASM memory.
+// Node permission mode provides a second boundary around this disposable worker.
+const { newQuickJSWASMModuleFromVariant } = require(process.argv[2]);
+const variant = require(process.argv[3]).default;
+const sendIpc = process.send.bind(process);
 
 const BOOTSTRAP = String.raw`
 (function bootstrapWorkflowApi() {
@@ -160,115 +137,149 @@ const BOOTSTRAP = String.raw`
 
 let initialized = false;
 let token;
+let context;
+let runtime;
+let workflowPromise;
+let deadline = 0;
+let finished = false;
 const pendingAgents = new Map();
 
 function send(message) {
-  sendIpc?.({ token, ...message });
+  if (!finished) sendIpc({ token, ...message });
 }
 
 function fail(error) {
   const message = error instanceof Error ? error.message : String(error);
   send({ kind: "error", error: message.slice(0, 16 * 1024) });
+  finished = true;
+}
+
+function guestError(handle) {
+  if (Date.now() >= deadline) return new Error("Workflow execution timed out");
+  const value = context.dump(handle);
+  return new Error(value?.message ?? String(value));
+}
+
+function drain() {
+  // One budget covers the entire microtask queue, including endless await loops.
+  while (runtime.hasPendingJob()) {
+    if (Date.now() >= deadline) throw new Error("Workflow execution timed out");
+    const result = runtime.executePendingJobs(1);
+    if (result.error) {
+      const error = guestError(result.error);
+      result.error.dispose();
+      throw error;
+    }
+  }
+  const state = context.getPromiseState(workflowPromise);
+  if (state.type === "rejected") {
+    const error = guestError(state.error);
+    state.error.dispose();
+    throw error;
+  }
+  if (state.type === "fulfilled") {
+    const resultJson = context.getString(state.value);
+    state.value.dispose();
+    send({ kind: "result", resultJson });
+    finished = true;
+  }
 }
 
 process.on("message", (message) => {
-  if (!message || typeof message !== "object") return;
+  if (!message || typeof message !== "object" || finished) return;
   if (!initialized) {
     if (
       message.kind !== "init" ||
       typeof message.token !== "string" ||
       typeof message.source !== "string" ||
       typeof message.argsJson !== "string"
-    ) {
-      process.exitCode = 1;
+    )
       return;
-    }
     initialized = true;
     token = message.token;
-    run(message.source, message.argsJson);
+    void run(message.source, message.argsJson).catch(fail);
     return;
   }
   if (message.token !== token || message.kind !== "agentResult") return;
   const pending = pendingAgents.get(message.id);
   if (!pending) return;
   pendingAgents.delete(message.id);
-  if (typeof message.resultJson === "string")
-    pending.resolve(message.resultJson);
-  else
-    pending.reject(
-      new Error(
-        typeof message.error === "string" ? message.error : "Agent IPC failed",
-      ),
-    );
-});
-
-function run(source, argsJson) {
   try {
-    const sandbox = Object.create(null);
-    sandbox.__argsJson = argsJson;
-    sandbox.__hostBridge = (kind, payloadJson) => {
-      if (kind === "phase") {
-        send({ kind: "phase", payloadJson });
-        return undefined;
-      }
-      if (kind !== "agent")
-        return Promise.reject(new Error("Unknown workflow operation"));
-      let id;
-      try {
-        id = JSON.parse(payloadJson).id;
-      } catch {
-        return Promise.reject(new Error("Invalid agent request"));
-      }
-      return new Promise((resolve, reject) => {
-        pendingAgents.set(id, { resolve, reject });
-        send({ kind: "agent", payloadJson });
-      });
-    };
-
-    const context = vm.createContext(sandbox, {
-      name: "pi-workflow",
-      codeGeneration: { strings: false, wasm: false },
-    });
-    new vm.Script(BOOTSTRAP, {
-      filename: "workflow-bootstrap.js",
-    }).runInContext(context, { timeout: 1000 });
-    const workflow = vm.compileFunction(
-      `"use strict";\nreturn (async function workflow() {\n${source}\n})();`,
-      ["agent", "parallel", "phase", "args"],
-      { filename: "workflow-script.js", parsingContext: context },
-    );
-    context.__workflowBody = workflow;
-    const invoke = `
-      (() => {
-        const workflowBody = globalThis.__workflowBody;
-        delete globalThis.__workflowBody;
-        globalThis.__workflowPromise = Promise.resolve(
-          workflowBody(agent, parallel, phase, args),
-        ).then(async (value) => {
-          await Promise.resolve();
-          const pending = __workflowCheck();
-          if (pending.unconsumed > 0) {
-            throw new Error("Workflow created " + pending.unconsumed + " unawaited agent() call(s)");
-          }
-          if (pending.inFlight > 0) {
-            throw new Error("Workflow returned before " + pending.inFlight + " agent call(s) settled");
-          }
-          return __workflowSerialize(value);
-        });
-      })();
-    `;
-    new vm.Script(invoke, { filename: "workflow-invoke.js" }).runInContext(
-      context,
-      { timeout: 1000 },
-    );
-    Promise.resolve(context.__workflowPromise)
-      .then((resultJson) => {
-        if (typeof resultJson !== "string")
-          throw new Error("Workflow result was not serializable");
-        send({ kind: "result", resultJson });
-      })
-      .catch(fail);
+    deadline = Date.now() + 1000;
+    const value =
+      typeof message.resultJson === "string"
+        ? context.newString(message.resultJson)
+        : context.newError("Agent IPC failed");
+    if (typeof message.resultJson === "string") pending.resolve(value);
+    else pending.reject(value);
+    value.dispose();
+    pending.dispose();
+    drain();
   } catch (error) {
     fail(error);
   }
+});
+
+async function run(source, argsJson) {
+  const module = await newQuickJSWASMModuleFromVariant(variant);
+  runtime = module.newRuntime();
+  runtime.setMemoryLimit(64 * 1024 * 1024);
+  runtime.setMaxStackSize(512 * 1024);
+  runtime.setInterruptHandler(() => Date.now() >= deadline);
+  context = runtime.newContext();
+  const args = context.newString(argsJson);
+  context.setProp(context.global, "__argsJson", args);
+  args.dispose();
+  const bridge = context.newFunction("bridge", (kindHandle, payloadHandle) => {
+    const kind = context.getString(kindHandle);
+    const payloadJson = context.getString(payloadHandle);
+    if (kind === "phase") {
+      if (Buffer.byteLength(payloadJson) > 4096)
+        throw new Error("Phase exceeds IPC limit");
+      send({ kind, payloadJson });
+      return context.undefined;
+    }
+    if (kind !== "agent") throw new Error("Unknown workflow operation");
+    if (Buffer.byteLength(payloadJson) > 512 * 1024)
+      throw new Error("Agent request exceeds IPC limit");
+    if (pendingAgents.size >= 32)
+      throw new Error("Too many pending agent requests");
+    const id = JSON.parse(payloadJson).id;
+    const pending = context.newPromise();
+    pendingAgents.set(id, pending);
+    send({ kind, payloadJson });
+    return pending.handle.dup();
+  });
+  context.setProp(context.global, "__hostBridge", bridge);
+  bridge.dispose();
+  deadline = Date.now() + 1000;
+  const evaluate = (code) => {
+    const result = context.evalCode(code, "workflow.js");
+    if (result.error) {
+      const error = guestError(result.error);
+      result.error.dispose();
+      throw error;
+    }
+    return result.value;
+  };
+  evaluate(BOOTSTRAP).dispose();
+  // Compile separately so wrapper syntax cannot bypass the completion checks.
+  const body = `"use strict"; return (async function workflow() {\n${source}\n})();`;
+  evaluate(
+    `globalThis.__workflowBody = new Function("agent", "parallel", "phase", "args", ${JSON.stringify(body)});`,
+  ).dispose();
+  workflowPromise = evaluate(`
+    (() => {
+      const workflowBody = globalThis.__workflowBody;
+      delete globalThis.__workflowBody;
+      return Promise.resolve(workflowBody(agent, parallel, phase, args)).then(async value => {
+        await Promise.resolve();
+        const pending = __workflowCheck();
+        if (pending.unconsumed > 0) throw new Error("Workflow created " + pending.unconsumed + " unawaited agent() call(s)");
+        if (pending.inFlight > 0) throw new Error("Workflow returned before agent calls settled");
+        return __workflowSerialize(value);
+      });
+    })()
+  `);
+  drain();
 }

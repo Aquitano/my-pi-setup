@@ -89,6 +89,44 @@ test("sandbox VM still rejects non-yielding synchronous code", async () => {
   await assert.rejects(run(`while (true) {}`), /timed out/);
 });
 
+test("agent promises and errors never expose the Node host realm", async () => {
+  const result = await run(`
+    const promise = agent("probe").then(value => value);
+    let escaped = false;
+    try { escaped = !!promise.constructor.constructor("return process")(); } catch {}
+    const reply = await promise;
+    let errorEscaped = false;
+    try { null.missing(); } catch (error) {
+      try { errorEscaped = !!error.constructor.constructor("return process")(); } catch {}
+    }
+    return { escaped, errorEscaped, output: reply.output };
+  `);
+  assert.deepEqual(result, {
+    escaped: false,
+    errorEscaped: false,
+    output: "reply:probe",
+  });
+});
+
+test("CPU limits also apply after awaiting an agent and inside microtasks", async () => {
+  for (const source of [
+    `await agent("start"); while (true) {}`,
+    `await Promise.resolve(); while (true) { await Promise.resolve(); }`,
+  ]) {
+    await assert.rejects(
+      run(source, { signal: AbortSignal.timeout(5_000) }),
+      /timed out/,
+    );
+  }
+});
+
+test("workflow dynamic imports cannot access Node modules", async () => {
+  await assert.rejects(
+    run(`return await import("node:fs");`),
+    /module|import/i,
+  );
+});
+
 test("workflow agent invocations have no per-request wall timer", async () => {
   let signalAborted = false;
   const result = await run(`return (await agent("delayed")).output;`, {
@@ -132,4 +170,19 @@ test("workflow cancellation aborts a pending agent request", async () => {
   controller.abort(new Error("cancel fixture"));
   await assert.rejects(pending, /Workflow was aborted/);
   assert.equal(requestAborted, true);
+});
+
+test("bridge failures stay in the guest realm and oversized results fail", async () => {
+  assert.equal(
+    await run(`
+    try { phase("x".repeat(5000)); }
+    catch (error) {
+      try { return !!error.constructor.constructor("return process")(); }
+      catch { return false; }
+    }
+    return "missing error";
+  `),
+    false,
+  );
+  await assert.rejects(run('return "x".repeat(2 * 1024 * 1024);'), /IPC limit/);
 });
