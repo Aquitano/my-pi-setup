@@ -1,18 +1,18 @@
 # Proposal: resume workflows from named agent checkpoints
 
-Status: design only. The current `workflow` tool cannot resume a run. The parameters and examples below are proposed APIs, not available commands.
+Status: design only. The `workflow` tool cannot resume a run today. The parameters and examples below are proposed, not implemented.
 
-## Why this needs a separate change
+## Why a separate change
 
-A workflow can finish several agents before cancellation, a provider failure, or a Pi restart. Starting over repeats their work. Some agents edit files or run commands, so repeating an interrupted call can also repeat side effects.
+A workflow can finish several agents before a cancellation, a provider failure, or a Pi restart. Starting over repeats their work, and an agent that edits files or runs commands repeats its side effects.
 
-The existing artifacts retain the script, arguments, run details, result, and transcripts. They do not provide a durable record of every exact agent result or distinguish an agent that never started from one that changed files before its result was saved. Transcript previews cannot serve as checkpoints.
+The saved artifacts hold the script, arguments, run details, result, and transcripts. They do not record every exact agent result, and they cannot tell an agent that never started from one that changed files before its result was saved. Transcript previews are not checkpoints.
 
-Resume should reuse known completed results. It must stop when a previous call's outcome is unknown and require a deliberate decision before retrying it. This does not provide exactly-once execution of agent tools.
+Resume should reuse completed results. When a previous call's outcome is unknown it must stop and wait for an explicit retry decision. It does not make agent tools exactly-once.
 
 ## Proposed first version
 
-Make resumption opt-in with `resumable: true`. Every `agent()` call in that run must supply a unique, stable `checkpoint` name. Ordinary workflows retain their current behavior.
+Resumption is opt-in with `resumable: true`. Every `agent()` call in such a run supplies a unique, stable `checkpoint` name. Ordinary workflows keep their current behavior.
 
 ```javascript
 // Proposed script for a workflow started with resumable: true.
@@ -27,28 +27,28 @@ return await agent(`Apply these fixes: ${JSON.stringify(review.structured)}`, {
 });
 ```
 
-A later tool invocation supplies `resume: "wf_<id>"`. Pi loads the original script and arguments; it rejects replacement script/args fields. The invocation creates a new attempt linked to the original run, preserving earlier artifacts. No startup hook automatically resumes work.
+A later tool call passes `resume: "wf_<id>"`. Pi loads the original script and arguments and rejects replacement script or args fields. The call creates a new attempt linked to the original run and keeps the earlier artifacts. Nothing resumes automatically at startup.
 
-The script starts again from the beginning. At each checkpoint, Pi either returns the saved result or executes the next agent. Phase updates and pure JavaScript calculations can repeat. The JavaScript heap, promises, running agent sessions, and individual agent tool calls are not restored.
+The script runs again from the beginning. At each checkpoint Pi returns the saved result or runs the agent. Phase updates and plain JavaScript repeat. The JavaScript heap, promises, running agent sessions, and individual agent tool calls are not restored.
 
-The first version should support sequential agents and the existing bounded `parallel()` helper. Parallel calls use stable names derived from input identity, such as `review:src/index.ts`, rather than their completion order. Reject duplicate names within an attempt before dispatch. Checkpoint names are data in a journal, never filenames.
+The first version supports sequential agents and the existing bounded `parallel()` helper. Parallel calls use stable names derived from their input, such as `review:src/index.ts`, never their completion order. Duplicate names within an attempt are rejected before dispatch. Checkpoint names are journal data, never filenames.
 
 ## The checkpoint store
 
-Introduce a host-owned `CheckpointStore` in `extensions/workflows/checkpoints.ts`. Its interface handles run creation, resume validation, and execution of a named call. Callers should not manipulate journal records directly.
+A host-owned `CheckpointStore` in `extensions/workflows/checkpoints.ts` handles run creation, resume validation, and execution of a named call. Callers never touch journal records directly.
 
 The store records:
 
 - A format version, run identity, original working directory, source hash, argument hash, and orchestration compatibility version.
-- Each checkpoint's name and request signature: prompt, canonicalized options/schema, resolved provider/model/effort, and relevant tool-policy configuration.
-- The exact bounded result delivered across the sandbox bridge, including `ok: false` results. Oversized results must fail explicitly; never silently truncate a checkpoint and later replay different data.
-- A state of `started` or `completed`, attempt identity, timestamps, and any explicit retry decision.
+- Each checkpoint's name and request signature: prompt, canonicalized options and schema, resolved provider, model and effort, and the relevant tool-policy configuration.
+- The exact bounded result delivered across the sandbox bridge, including `ok: false` results. An oversized result fails explicitly. A checkpoint is never truncated and replayed as different data.
+- A state of `started` or `completed`, the attempt identity, timestamps, and any explicit retry decision.
 
-Validate all persisted data at the storage boundary. Reject unsupported versions, invalid state transitions, missing results, signature mismatches, and files exceeding the store's byte/record limits. Keep the existing 32-call budget and IPC limits; add a total journal limit, proposed as 20 MiB per run lineage for the first version.
+The store validates everything it reads. It rejects unsupported versions, invalid state transitions, missing results, signature mismatches, and files over its byte and record limits. The existing 32-call budget and IPC limits stay. A total journal limit of 20 MiB per run lineage is proposed for the first version.
 
-Use private directory/file modes, atomic replacement, and file/directory synchronization where supported. Save `started` durably before dispatch. Save `completed` durably before returning its result to JavaScript. Persistence failures stop execution instead of falling back to uncached work.
+Writes use private file modes, atomic replacement, and file and directory sync where supported. `started` is saved durably before dispatch and `completed` before the result reaches JavaScript. A persistence failure stops execution rather than falling back to uncached work.
 
-Acquire an exclusive lock for the run lineage before inspecting or updating it. Two Pi processes must not resume it concurrently. A stale lock must be resolved explicitly after verifying that its owner is gone; time elapsed alone is insufficient. Validate run IDs and canonical paths, and reject symlinks that escape the user-owned workflow directory.
+The store takes an exclusive lock on the run lineage before reading or writing it, so two Pi processes cannot resume the same run. A stale lock is cleared only after verifying its owner is gone. Elapsed time alone is not enough. Run IDs and canonical paths are validated, and symlinks that escape the user-owned workflow directory are rejected.
 
 ## Resume decisions
 
@@ -60,41 +60,41 @@ Acquire an exclusive lock for the run lineage before inspecting or updating it. 
 | `started`, no durable result            | Stop and report an unknown outcome. Do not dispatch automatically.              |
 | Invalid journal or incompatible version | Stop with an actionable error.                                                  |
 
-A queued call might have a `started` record even if no provider request was sent. Treating that case as unknown is conservative and keeps the first protocol small.
+A queued call can hold a `started` record although no provider request was sent. Treating it as unknown is conservative and keeps the first protocol small.
 
-An unknown outcome should show the checkpoint prompt, attempt time, transcript location, and working directory. The user can inspect the work and explicitly retry that checkpoint, accepting that edits or commands may repeat. The tool must not infer consent from the original workflow request. A proposed `retry_checkpoints` field names the exact checkpoints authorized for retry; failed `ok: false` results otherwise replay unchanged.
+An unknown outcome shows the checkpoint prompt, attempt time, transcript location, and working directory. The user inspects the work and retries that checkpoint explicitly, accepting that edits or commands may repeat. The tool never infers consent from the original workflow request. A proposed `retry_checkpoints` field names the checkpoints authorized for retry. Failed `ok: false` results otherwise replay unchanged.
 
-Do not offer “mark complete” with invented output in the first version. An agent result supplied by a person would need its own validation and audit path.
+The first version has no "mark complete" with invented output. A person-supplied agent result needs its own validation and audit path.
 
 ## Integration points
 
-1. Extend workflow parameters in `index.ts` and the descriptions in `prompt.ts`. Resolve either a new script or a validated saved run before constructing the controller.
-2. Pass `checkpoint` as another validated primitive option through `sandbox.ts`. The sandbox never receives journal paths, locks, or file access. Prefer implementing this after the QuickJS isolation change.
-3. Wrap the host `agentFn` with the store. A cache hit bypasses the runner and shared concurrency queue; a new attempt uses the same runner, cancellation, trust checks, and capacity pool as ordinary agents.
-4. Record reused checkpoints separately in run details so the dashboard can distinguish cached work from newly executed agents. Keep transcripts in their original attempt and link to them.
-5. Add a resume action to `/workflows` only after the tool path is tested. Show unknown outcomes before presenting a retry action.
+1. Extend the workflow parameters in `index.ts` and the descriptions in `prompt.ts`. Resolve either a new script or a validated saved run before constructing the controller.
+2. Pass `checkpoint` as another validated primitive option through `sandbox.ts`. The sandbox never sees journal paths, locks, or files. Implement this after the QuickJS isolation change.
+3. Wrap the host `agentFn` with the store. A cache hit bypasses the runner and the shared concurrency queue. A new attempt uses the same runner, cancellation, trust checks, and capacity pool as any agent.
+4. Record reused checkpoints separately in the run details so the dashboard can tell cached work from newly executed agents. Transcripts stay in their original attempt and are linked.
+5. Add a resume action to `/workflows` only after the tool path is tested. Show unknown outcomes before offering a retry action.
 
-Re-evaluate current project trust and permissions at resume time. A saved run is not a grant of old permissions. Pin resolved model choices in request signatures; changes that make a checkpoint incompatible require a new run or an explicit migration, not silent reuse.
+Project trust and permissions are re-evaluated at resume time. A saved run is not a grant of old permissions. Resolved model choices are pinned in request signatures. A change that makes a checkpoint incompatible requires a new run or an explicit migration, never silent reuse.
 
-Resume assumes deterministic orchestration for the same inputs and saved results. Changed prompt construction, model selection, schema, or other request inputs must fail signature validation. Do not promise deterministic replay of arbitrary uses of clocks, randomness, or external state. Document those restrictions in the model-facing workflow instructions.
+Resume assumes deterministic orchestration for the same inputs and saved results. A changed prompt, model, schema, or other request input fails signature validation. Arbitrary use of clocks, randomness, or external state is not replayed deterministically. The model-facing workflow instructions document these limits.
 
 ## Verification before enabling resume
 
-Use fake agents with observable side-effect counters and fault injection at journal boundaries:
+Use fake agents with side-effect counters and fault injection at journal boundaries:
 
-- Crash after a completed result is saved: resume reuses it and the counter remains one.
+- Crash after a completed result is saved: resume reuses it and the counter stays at one.
 - Crash after dispatch but before completion is saved: resume stops without increasing the counter.
-- Explicit retry of that checkpoint: exactly one additional dispatch occurs and the decision is recorded.
-- Cancel while queued and while running: no implicit retry occurs on restart.
-- Resume two processes concurrently: only one obtains the lineage lock.
+- Explicit retry of that checkpoint: exactly one more dispatch happens and the decision is recorded.
+- Cancel while queued and while running: no implicit retry on restart.
+- Resume from two processes at once: only one gets the lineage lock.
 - Reorder parallel completion: results still match checkpoint identity and request signatures.
 - Change source, args, cwd, schema, model, or permissions: incompatible reuse fails before launching an agent.
-- Corrupt/truncate a journal or fail a write: execution stops; no fabricated cache hit or unjournaled dispatch occurs.
-- Restart Pi and load through a packed production install: completed results survive and no live credentials are needed for the test.
-- Load an old, non-resumable run: report that it has no checkpoints rather than claiming it can resume.
+- Corrupt or truncate a journal, or fail a write: execution stops with no fabricated cache hit and no unjournaled dispatch.
+- Restart Pi and load through a packed production install: completed results survive without live credentials.
+- Load an old, non-resumable run: report that it has no checkpoints instead of claiming it can resume.
 
-## Suggested implementation sequence
+## Implementation sequence
 
-First implement and test the bounded store, signatures, locking, and crash protocol. Then add the opt-in tool/API integration with fake-runner end-to-end tests. Finally add dashboard actions and unknown-outcome review. Keep each stage disabled for ordinary runs until the corresponding integration checks pass.
+First the bounded store, signatures, locking, and crash protocol, with tests. Then the opt-in tool and API integration with fake-runner end-to-end tests. Finally the dashboard actions and unknown-outcome review. Each stage stays disabled for ordinary runs until its integration checks pass.
 
-This is feasible, but it is larger than a small replay flag. The sandbox, shared concurrency, and settings UI can ship independently while this protocol is reviewed.
+This is feasible but larger than a replay flag. The sandbox, shared concurrency, and settings UI ship independently while this protocol is reviewed.
