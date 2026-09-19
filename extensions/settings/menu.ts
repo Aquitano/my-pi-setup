@@ -6,6 +6,7 @@ import {
 import {
   CLAUDE_MODES,
   CODEX_MODES,
+  DEFAULT_SUBAGENT_PERMISSIONS,
   loadSubagentPermissions,
   saveSubagentPermissions,
 } from "../subagents/src/permissions.ts";
@@ -33,6 +34,19 @@ const limitChoices = Array.from({ length: 32 }, (_, index) =>
   String(index + 1),
 );
 
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** A broken config file must not lock the user out of the menu that fixes it. */
+function attempt<T>(load: () => T) {
+  try {
+    return { value: load(), error: undefined };
+  } catch (error) {
+    return { value: undefined, error: errorText(error) };
+  }
+}
+
 async function pick<const T extends string>(
   ui: SetupUi,
   title: string,
@@ -50,14 +64,25 @@ export async function openSetup(
   ui: SetupUi,
   chooseSummary: (current: SummaryConfig) => Promise<SummaryConfig | undefined>,
 ) {
+  let reported = false;
   while (true) {
     try {
-      const permissions = loadSubagentPermissions();
+      const permissions = attempt(loadSubagentPermissions);
+      const pool = attempt(() => getAgentConcurrency().snapshot);
       const summary = loadSummaryConfig();
-      const pool = getAgentConcurrency().snapshot;
+      if (!reported) {
+        reported = true;
+        for (const problem of [permissions.error, pool.error]) {
+          if (problem) ui.notify(problem, "warning");
+        }
+      }
+      const current = permissions.value ?? DEFAULT_SUBAGENT_PERMISSIONS;
+      const capacity = pool.value
+        ? `${pool.value.limit} (${pool.value.active} running, ${pool.value.waiting} waiting)`
+        : "unreadable";
       const items = [
         {
-          label: `Claude permissions · ${permissions.claude}`,
+          label: `Claude permissions · ${permissions.value?.claude ?? "unreadable"}`,
           edit: async () => {
             const mode = await pick(
               ui,
@@ -65,12 +90,12 @@ export async function openSetup(
               claudeChoices,
             );
             if (!mode) return false;
-            await saveSubagentPermissions({ ...permissions, claude: mode });
+            await saveSubagentPermissions({ ...current, claude: mode });
             return true;
           },
         },
         {
-          label: `Codex permissions · ${permissions.codex}`,
+          label: `Codex permissions · ${permissions.value?.codex ?? "unreadable"}`,
           edit: async () => {
             const mode = await pick(
               ui,
@@ -78,12 +103,12 @@ export async function openSetup(
               codexChoices,
             );
             if (!mode) return false;
-            await saveSubagentPermissions({ ...permissions, codex: mode });
+            await saveSubagentPermissions({ ...current, codex: mode });
             return true;
           },
         },
         {
-          label: `Concurrent agents · ${pool.limit} (${pool.active} running, ${pool.waiting} waiting)`,
+          label: `Concurrent agents · ${capacity}`,
           edit: async () => {
             const limit = await ui.select(
               "Shared agent limit (running agents finish first)",
@@ -122,10 +147,7 @@ export async function openSetup(
       if (!item) return;
       if (await item.edit()) ui.notify("Setting saved.", "info");
     } catch (error) {
-      ui.notify(
-        `Could not update settings: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
+      ui.notify(`Could not update settings: ${errorText(error)}`, "error");
       return;
     }
   }

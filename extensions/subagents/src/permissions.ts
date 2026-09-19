@@ -12,6 +12,10 @@ export const CLAUDE_MODES = [
   "bypassPermissions",
 ] as const;
 export const CODEX_MODES = ["auto", "sandbox", "full-access"] as const;
+export const DEFAULT_SUBAGENT_PERMISSIONS = {
+  claude: "auto",
+  codex: "auto",
+} as const;
 
 function parseMode<const T extends string>(
   value: unknown,
@@ -33,7 +37,7 @@ export function loadSubagentPermissions(agentDir = getAgentDir()) {
     text = readFileSync(file, "utf8");
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return { claude: "auto", codex: "auto" } as const;
+      return DEFAULT_SUBAGENT_PERMISSIONS;
     }
     throw new Error(`Cannot read ${file}`, { cause: error });
   }

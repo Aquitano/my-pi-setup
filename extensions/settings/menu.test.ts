@@ -87,15 +87,31 @@ test("settings menu persists permissions, live capacity, and recap preferences",
   assert.equal(getAgentConcurrency().snapshot.limit, 2);
 });
 
-test("malformed user settings report the file without overwriting it", async () => {
+test("malformed user settings are reported but the menu still opens and repairs them", async () => {
   const file = join(dir, "subagents.json");
   writeFileSync(file, '{"codex":"typo"}');
-  const { ui, notices } = menu(["Close"]);
-  await openSetup(ui, async () => undefined);
-  assert.equal(notices.length, 1);
-  assert.match(
-    notices[0]!,
-    /Could not update settings: Invalid .*subagents.json/,
-  );
+  writeFileSync(join(dir, "concurrency.json"), '{"maxRunning":99}');
+  const closed = menu(["Close"]);
+  await openSetup(closed.ui, async () => undefined);
+  assert.equal(closed.notices.length, 2);
+  assert.match(closed.notices[0]!, /Invalid .*subagents.json/);
+  assert.match(closed.notices[1]!, /Invalid .*concurrency.json/);
   assert.equal(readFileSync(file, "utf8"), '{"codex":"typo"}');
+
+  const repaired = menu([
+    "Claude permissions",
+    "plan",
+    "Concurrent agents",
+    "3",
+    "Close",
+  ]);
+  await openSetup(repaired.ui, async () => undefined);
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), {
+    claude: "plan",
+    codex: "auto",
+  });
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(dir, "concurrency.json"), "utf8")),
+    { maxRunning: 3 },
+  );
 });
