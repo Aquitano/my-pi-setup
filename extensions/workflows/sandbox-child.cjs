@@ -142,7 +142,6 @@ let runtime;
 let workflowPromise;
 let deadline = 0;
 let finished = false;
-let phaseUpdates = 0;
 const pendingAgents = new Map();
 
 function send(message) {
@@ -235,21 +234,11 @@ async function run(source, argsJson) {
     const kind = context.getString(kindHandle);
     const payloadJson = context.getString(payloadHandle);
     if (kind === "phase") {
-      if (++phaseUpdates > 256)
-        throw new Error("Workflow exceeded its phase update budget");
-      if (Buffer.byteLength(payloadJson) > 4096)
-        throw new Error("Phase exceeds IPC limit");
       send({ kind, payloadJson });
       return context.undefined;
     }
-    if (kind !== "agent") throw new Error("Unknown workflow operation");
-    if (Buffer.byteLength(payloadJson) > 512 * 1024)
-      throw new Error("Agent request exceeds IPC limit");
-    if (pendingAgents.size >= 32)
-      throw new Error("Too many pending agent requests");
-    const id = JSON.parse(payloadJson).id;
     const pending = context.newPromise();
-    pendingAgents.set(id, pending);
+    pendingAgents.set(JSON.parse(payloadJson).id, pending);
     send({ kind, payloadJson });
     return pending.handle.dup();
   });

@@ -103,33 +103,33 @@ export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
   }
 
   return new Promise<unknown>((resolve, reject) => {
+    const require = createRequire(import.meta.url);
     const workerPath = realpathSync(
       fileURLToPath(new URL("./sandbox-child.cjs", import.meta.url)),
     );
-    const require = createRequire(import.meta.url);
-    const runtimePaths = [
-      realpathSync(require.resolve("quickjs-emscripten-core")),
-      realpathSync(
-        require.resolve("@jitl/quickjs-singlefile-cjs-release-sync"),
+    const corePath = realpathSync(require.resolve("quickjs-emscripten-core"));
+    const variantPath = realpathSync(
+      require.resolve("@jitl/quickjs-singlefile-cjs-release-sync"),
+    );
+    const ffiTypesPath = realpathSync(
+      createRequire(corePath).resolve("@jitl/quickjs-ffi-types"),
+    );
+    const readableDirs = [
+      path.dirname(workerPath),
+      ...[corePath, variantPath, ffiTypesPath].map((entry) =>
+        path.dirname(path.dirname(entry)),
       ),
     ];
-    runtimePaths.push(
-      realpathSync(
-        createRequire(runtimePaths[0]!).resolve("@jitl/quickjs-ffi-types"),
-      ),
-    );
     const child = spawn(
       process.execPath,
       [
         "--permission",
-        `--allow-fs-read=${path.dirname(workerPath)}`,
-        ...runtimePaths.map(
-          (entry) => `--allow-fs-read=${path.dirname(path.dirname(entry))}`,
-        ),
+        ...readableDirs.map((dir) => `--allow-fs-read=${dir}`),
         "--max-old-space-size=128",
         "--stack-size=2048",
         workerPath,
-        ...runtimePaths,
+        corePath,
+        variantPath,
       ],
       {
         cwd: options.cwd,

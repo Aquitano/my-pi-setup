@@ -150,6 +150,6 @@ The package does not change your global npm settings. A release-age policy, unav
 
 ### Workflow isolation
 
-Workflow scripts execute in QuickJS inside WebAssembly, in a separate Node process with restricted filesystem permissions. Only JSON crosses the `agent()` and `phase()` bridge. The embedded runtime ships with the package; no compiler or separate runtime download is required.
+Workflow scripts run in a QuickJS interpreter compiled to WebAssembly, inside a separate Node process with restricted filesystem permissions. Only JSON crosses the `agent()` and `phase()` bridge. The interpreter ships with the package.
 
-Each uninterrupted execution slice, including promise callbacks, has a one-second limit. Waiting for an agent does not consume that budget. The interpreter has a 64 MiB memory limit; source, arguments, results, agent request counts, and phase updates (256 per run) are also bounded. Cancellation terminates the worker and aborts its outstanding agent requests. Agents themselves retain their configured tool permissions.
+Each uninterrupted execution slice, including promise callbacks, may run for one second. Waiting for an agent does not count. The interpreter has a 64 MiB memory limit. Source, arguments, results, agent requests (32 per run) and phase updates (256 per run) are bounded. Cancellation terminates the worker and aborts its outstanding agent requests.

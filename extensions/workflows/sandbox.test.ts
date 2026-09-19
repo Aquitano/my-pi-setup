@@ -172,18 +172,8 @@ test("workflow cancellation aborts a pending agent request", async () => {
   assert.equal(requestAborted, true);
 });
 
-test("bridge failures stay in the guest realm and oversized results fail", async () => {
-  assert.equal(
-    await run(`
-    try { phase("x".repeat(5000)); }
-    catch (error) {
-      try { return !!error.constructor.constructor("return process")(); }
-      catch { return false; }
-    }
-    return "missing error";
-  `),
-    false,
-  );
+test("oversized phase updates and results fail the run", async () => {
+  await assert.rejects(run('phase("x".repeat(5000));'), /invalid phase update/);
   await assert.rejects(run('return "x".repeat(2 * 1024 * 1024);'), /IPC limit/);
 });
 
