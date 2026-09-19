@@ -199,6 +199,8 @@ const makeManager = Effect.gen(function* () {
     const waiters = changeWaiters;
     changeWaiters = [];
     for (const waiter of waiters) waiter();
+    // Snapshot because callbacks can add or remove listeners during notification.
+    // eslint-disable-next-line unicorn/no-useless-spread
     for (const listener of [...listeners]) {
       try {
         listener();

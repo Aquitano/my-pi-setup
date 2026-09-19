@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
   formatSize,
+  getAgentDir,
   truncateHead,
   type AgentToolResult,
   type AgentToolUpdateCallback,
@@ -33,7 +34,7 @@ import {
 function readEnvValue(name: string) {
   if (process.env[name]) return process.env[name];
 
-  const envPath = join(homedir(), ".pi", "agent", ".env");
+  const envPath = join(getAgentDir(), ".env");
   let envText = "";
 
   try {

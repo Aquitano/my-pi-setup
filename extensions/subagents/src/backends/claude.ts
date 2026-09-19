@@ -33,6 +33,10 @@ import type {
   TranscriptPart,
 } from "../domain.ts";
 import { SendError, SpawnError } from "../domain.ts";
+import {
+  claudePermissionOptions,
+  loadSubagentPermissions,
+} from "../permissions.ts";
 
 const CLAUDE_CONTEXT_WINDOW = 200_000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
@@ -288,6 +292,10 @@ const makeClaudeSession = (
   task: SpawnTask,
 ): Effect.Effect<SubagentSession, SpawnError, Scope.Scope> =>
   Effect.gen(function* () {
+    const permissions = yield* Effect.try({
+      try: () => claudePermissionOptions(loadSubagentPermissions().claude),
+      catch: (error) => new SpawnError({ message: boundedError(error) }),
+    });
     const input = new ClaudeInput();
     const abortController = new AbortController();
     const events = yield* Queue.make<SubagentEvent, Cause.Done>();
@@ -327,11 +335,7 @@ const makeClaudeSession = (
           prompt: input,
           options: {
             cwd: task.cwd,
-            // Headless children cannot answer approval prompts. The caller
-            // already chose to launch an autonomous subagent, so let it use
-            // its tools without interactive permission checks.
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
+            ...permissions,
             // Keep child orchestration inside this extension's global manager
             // and concurrency cap rather than Claude Code's native subagents.
             disallowedTools: ["Agent", "Task"],

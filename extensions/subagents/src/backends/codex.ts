@@ -24,6 +24,10 @@ import type {
   TranscriptPart,
 } from "../domain.ts";
 import { SendError, SpawnError } from "../domain.ts";
+import {
+  codexPermissionOptions,
+  loadSubagentPermissions,
+} from "../permissions.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MODEL_LIST_TIMEOUT_MS = 5_000;
@@ -305,6 +309,10 @@ const makeCodexSession = (
   task: SpawnTask,
 ): Effect.Effect<SubagentSession, SpawnError, Scope.Scope> =>
   Effect.gen(function* () {
+    const permissions = yield* Effect.try({
+      try: () => codexPermissionOptions(loadSubagentPermissions().codex),
+      catch: (error) => new SpawnError({ message: boundedError(error) }),
+    });
     const binary = resolveCodexBinary();
     if (!binary) {
       return yield* new SpawnError({
@@ -886,16 +894,22 @@ const makeCodexSession = (
           capabilities: { experimentalApi: true },
         });
         writeMessage({ method: "initialized" });
-        // Headless children cannot answer approval prompts. The caller
-        // already chose to launch an autonomous subagent, so give the thread
-        // full workspace access without interactive approval requests.
-        return request("thread/start", {
+        const result = await request("thread/start", {
           cwd: task.cwd,
-          approvalPolicy: "never",
-          sandbox: "danger-full-access",
+          ...permissions,
           ephemeral: false,
           ...(task.model ? { model: task.model } : {}),
         });
+        if (
+          permissions.approvalsReviewer === "auto_review" &&
+          result.approvalsReviewer !== "auto_review" &&
+          result.approvalsReviewer !== "guardian_subagent"
+        ) {
+          throw new Error(
+            "Codex did not enable automatic approval review. Update Codex or select codex: sandbox in subagents.json.",
+          );
+        }
+        return result;
       },
       catch: (error) => new SpawnError({ message: boundedError(error) }),
     });

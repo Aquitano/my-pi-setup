@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Data, Effect } from "effect";
 
 class ConfigWriteError extends Data.TaggedError("ConfigWriteError")<{
@@ -35,10 +36,8 @@ export const DEFAULT_SUMMARY_CONFIG: SummaryConfig = {
 };
 
 const extensionDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
-export const PRIVATE_CONFIG_PATH = join(
-  extensionDirectory,
-  "config.private.json",
-);
+export const PRIVATE_CONFIG_PATH = join(getAgentDir(), "summaries.json");
+const LEGACY_CONFIG_PATH = join(extensionDirectory, "config.private.json");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -68,13 +67,16 @@ export function parseSummaryConfig(value: unknown) {
 }
 
 export function loadSummaryConfig() {
-  try {
-    return parseSummaryConfig(
-      JSON.parse(readFileSync(PRIVATE_CONFIG_PATH, "utf8")),
-    );
-  } catch {
-    return DEFAULT_SUMMARY_CONFIG;
+  for (const file of [PRIVATE_CONFIG_PATH, LEGACY_CONFIG_PATH]) {
+    try {
+      return parseSummaryConfig(JSON.parse(readFileSync(file, "utf8")));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT")
+        continue;
+      return DEFAULT_SUMMARY_CONFIG;
+    }
   }
+  return DEFAULT_SUMMARY_CONFIG;
 }
 
 export function saveSummaryConfig(config: SummaryConfig, signal?: AbortSignal) {

@@ -297,6 +297,8 @@ const makeManager = Effect.gen(function* () {
     ((snap: TerminalSnapshot, consumed: boolean) => void) | undefined;
 
   const notify = (id?: string) => {
+    // Snapshot because callbacks can add or remove listeners during notification.
+    // eslint-disable-next-line unicorn/no-useless-spread
     for (const listener of [...listeners]) {
       try {
         listener();

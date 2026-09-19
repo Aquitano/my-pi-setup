@@ -3,7 +3,7 @@
  *
  * Resolution order (per tool, first usable wins):
  *   1. A normally installed system binary (`fd`/`fdfind`, `rg`) — used silently.
- *   2. An existing fallback in this repository's `bin/` directory — used silently.
+ *   2. An existing fallback in Pi's `bin/` directory — used silently.
  *   3. A fresh download of an official release into `bin/` — the only case that
  *      should surface a UI notification.
  *
@@ -13,10 +13,10 @@
  */
 
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Crypto, Data, Effect, Encoding, FileSystem, Stream } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
@@ -143,10 +143,9 @@ export function currentTarget(): PlatformTarget {
   return { os: process.platform, arch: process.arch };
 }
 
-/** Repository root (`~/.pi/agent`) resolved from this module's location. */
+/** Shared cache survives package updates and works with read-only installs. */
 export function repositoryBinDir() {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  return join(moduleDir, "..", "..", "..", "bin");
+  return join(getAgentDir(), "bin");
 }
 
 export class UnsupportedPlatformError extends Data.TaggedError(

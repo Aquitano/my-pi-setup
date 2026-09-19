@@ -1,31 +1,43 @@
-# Setup
+# Set up the Pi package
 
-Clone or copy this repository to `~/.pi/agent`, then install its dependencies:
+Use Pi 0.82 or newer with Node.js 24.16 or newer.
 
-```sh
-cd ~/.pi/agent
-npm install
-```
-
-## Firecrawl
-
-The search, scrape, and crawl tools require a Firecrawl API key. Follow [Firecrawl's Node.js getting-started guide](https://docs.firecrawl.dev/quickstarts/nodejs) to create one, then copy the example environment file:
+## Install from GitHub
 
 ```sh
-cp ~/.pi/agent/.env.example ~/.pi/agent/.env
+pi install git:github.com/Aquitano/my-pi-setup
 ```
 
-Replace the placeholder in `~/.pi/agent/.env` with your API key.
+For your own fork, replace `Aquitano` with your GitHub username. Pi installs the package dependencies and registers the extensions, skills, and theme. Run `/reload` in an open Pi session.
 
-NOTE: if you are an agent, at this step ask the user if they want to use firecrawl, if they do give them the instructions, if not remove the firecrawl extension in their pi setup
+To install for one project, add `-l`:
 
-## fd and rg tools
+```sh
+pi install -l git:github.com/Aquitano/my-pi-setup
+```
 
-The `file-search` extension registers `fd` and `rg` as model tools. No setup is normally needed: at startup it silently uses a system-installed `fd` (or `fdfind` on Debian/Ubuntu) and `rg` when available, or an existing fallback binary in `~/.pi/agent/bin/`. Only when neither exists does it download an official release binary (macOS/Linux, arm64/x64, over HTTPS) into `~/.pi/agent/bin/` and show a one-time notification. If your platform is unsupported, install `fd` and `rg` with your package manager and restart pi.
+To update installed packages:
 
-## Theme
+```sh
+pi update --extensions
+```
 
-Add the included theme to `~/.pi/agent/settings.json` while keeping your existing settings:
+Use `pi config` to enable or disable individual extensions, skills, and themes.
+
+## Migrate an existing directory installation
+
+If this repository is already your `~/.pi/agent` directory, keep that checkout until you have backed up your settings and private files. Installing the package alongside its existing extensions would load duplicate tools.
+
+1. Copy the repository to a separate development directory, excluding `node_modules`.
+2. If `~/.pi/agent/extensions/summaries/config.private.json` exists, copy it to `~/.pi/agent/summaries.json` unless that file already exists.
+3. Move this repository's extension directories, its two skill directories, and `themes/github-dark-default.json` out of `~/.pi/agent` into your backup. Keep unrelated extensions and skills.
+4. Run the GitHub install command above and restart Pi.
+
+Keep `auth.json`, `settings.json`, `trust.json`, model configuration, `.env`, sessions, and workflow history in your agent directory. Package updates do not replace those files.
+
+## Select the theme
+
+Set `theme` in `~/.pi/agent/settings.json`, keeping your other settings:
 
 ```json
 {
@@ -33,4 +45,105 @@ Add the included theme to `~/.pi/agent/settings.json` while keeping your existin
 }
 ```
 
-Pi will load the extensions, skills, and theme from their directories the next time it starts.
+## Enable Firecrawl
+
+The search, scrape, and crawl tools require a Firecrawl API key. Create one using [Firecrawl's getting-started guide](https://docs.firecrawl.dev/quickstarts/nodejs), then set `FIRECRAWL_API_KEY` in your shell or add this line to `~/.pi/agent/.env`:
+
+```dotenv
+FIRECRAWL_API_KEY=fc-YOUR-API-KEY
+```
+
+If you do not use Firecrawl, disable `firecrawl-search` with `pi config`.
+
+## Configure subagent permissions
+
+Claude and Codex use automatic permission review by default. Install and authenticate the corresponding CLI before launching its subagents. Keep both CLIs current. Claude's headless permission handling requires Claude Code 2.1.259 or newer, and auto mode also depends on model and account availability.
+
+To override the defaults, create `~/.pi/agent/subagents.json`:
+
+```json
+{
+  "claude": "auto",
+  "codex": "auto"
+}
+```
+
+Each new subagent reads this file. Existing subagents keep their starting permissions. Omitted fields default to `auto`. Invalid settings stop the subagent from starting and report the configuration error.
+
+| Backend | Setting | Behavior |
+| --- | --- | --- |
+| Claude | `auto` | Claude's permission classifier approves or denies actions. |
+| Claude | `acceptEdits` | Approves file edits. Other actions follow Claude's permission rules. |
+| Claude | `dontAsk` | Denies actions that would require a permission prompt. |
+| Claude | `plan` | Uses Claude's planning mode. |
+| Claude | `bypassPermissions` | Explicitly enables the previous permission-bypass behavior. |
+| Codex | `auto` | Uses `workspace-write`, `on-request`, and the `auto_review` approval reviewer. |
+| Codex | `sandbox` | Uses `workspace-write` and never requests escalation. |
+| Codex | `full-access` | Explicitly disables sandboxing and approval prompts. |
+
+These are headless sessions. Requests that still require a human are denied. Auto mode never falls back to unrestricted access. If Codex cannot confirm automatic review, update it or select `sandbox`.
+
+The Pi backend continues to use Pi's own tools and trust settings. These overrides affect only Claude and Codex.
+
+See [Claude permission modes](https://code.claude.com/docs/en/agent-sdk/permissions) and [Codex App Server](https://developers.openai.com/codex/app-server) for the native behavior.
+
+## Keep private state outside the package
+
+Summary model preferences are saved to `~/.pi/agent/summaries.json`. Use `/summary-model` to change them. The old extension-local `config.private.json` remains a read fallback for existing directory installations.
+
+The file-search extension uses installed `fd` or `fdfind` and `rg` first. If necessary, it downloads checksum-verified macOS or Linux binaries into `~/.pi/agent/bin`. Unsupported platforms require a manual binary installation.
+
+All agent-directory paths above follow `PI_CODING_AGENT_DIR` when it is set. Do not put private configuration inside Pi's downloaded package checkout, because package updates can replace that checkout.
+
+## Develop and verify a checkout
+
+Install dependencies once at the repository root:
+
+```sh
+npm ci
+npm run check
+npm run format:check
+npm run lint
+npm test
+npm run test:install
+```
+
+There are no per-extension installs or compiler-patching install hooks. The root lockfile pins dependencies, including the matching Effect v4 release-candidate packages. Use `npm ci` for reproducible development installs.
+
+`npm test` runs offline tests. `npm run test:install` uses temporary directories to check production-only installation, repeat installation, packed resources, and Pi extension loading. It downloads dependencies as needed and does not change your Pi settings or call models.
+
+To load a development checkout in Pi:
+
+```sh
+pi install /absolute/path/to/my-pi-setup
+```
+
+Live Claude and Codex tests are separate and use your authenticated accounts:
+
+```sh
+npm run test:live
+```
+
+## Resolve npm release-age errors
+
+If npm reports that a recent version does not exist before an old date, inspect the `min-release-age` setting in your `.npmrc`. npm 11.13 interprets this value in **days**. For example, `1440` means almost four years, not one day.
+
+If you intended a one-day delay, correct your user setting:
+
+```sh
+npm config set min-release-age 1 --location=user
+```
+
+To deliberately install a requested release newer than that delay, override the filter for one command:
+
+```sh
+npm install --min-release-age=0
+```
+
+For the isolated install check, pass the override to its nested npm commands:
+
+```sh
+npm run test:install -- --min-release-age=0
+```
+
+The package does not change your global npm settings. A release-age policy, unavailable registry, or unsupported Node version can still prevent installation.
