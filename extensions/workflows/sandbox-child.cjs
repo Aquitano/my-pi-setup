@@ -2,8 +2,19 @@
 
 // The only objects shared with workflows are QuickJS values in WASM memory.
 // Node permission mode provides a second boundary around this disposable worker.
-const { newQuickJSWASMModuleFromVariant } = require(process.argv[2]);
-const variant = require(process.argv[3]).default;
+const { newQuickJSWASMModuleFromVariant, newVariant } = require(
+  process.argv[2],
+);
+// QuickJS's own malloc limit only rejects single allocations, so the
+// WebAssembly memory maximum is what actually bounds the guest heap.
+const WASM_PAGE_BYTES = 64 * 1024;
+const variant = newVariant(require(process.argv[3]).default, {
+  wasmMemory: new WebAssembly.Memory({
+    initial: (16 * 1024 * 1024) / WASM_PAGE_BYTES,
+    maximum: (128 * 1024 * 1024) / WASM_PAGE_BYTES,
+  }),
+});
+const MAX_IPC_BYTES = 1024 * 1024;
 const sendIpc = process.send.bind(process);
 
 const BOOTSTRAP = String.raw`
@@ -11,6 +22,9 @@ const BOOTSTRAP = String.raw`
   "use strict";
   const callHost = globalThis.__hostBridge;
   delete globalThis.__hostBridge;
+  // The completion checks below run through Promise methods; keep them honest.
+  Object.freeze(Promise);
+  Object.freeze(Promise.prototype);
   let nextRequestId = 0;
   const unconsumed = new Set();
   const inFlight = new Set();
@@ -155,9 +169,18 @@ function fail(error) {
 }
 
 function guestError(handle) {
-  if (Date.now() >= deadline) return new Error("Workflow execution timed out");
-  const value = context.dump(handle);
+  const timedOut = Date.now() >= deadline;
+  // dump() already disposes promise handles, so ownership ends here.
+  const value = timedOut ? undefined : context.dump(handle);
+  if (handle.alive) handle.dispose();
+  if (timedOut) return new Error("Workflow execution timed out");
   return new Error(value?.message ?? String(value));
+}
+
+function checkIpcSize(kind, json) {
+  if (Buffer.byteLength(json) > MAX_IPC_BYTES)
+    throw new Error(`Workflow ${kind} exceeds the IPC limit`);
+  return json;
 }
 
 function drain() {
@@ -165,23 +188,17 @@ function drain() {
   while (runtime.hasPendingJob()) {
     if (Date.now() >= deadline) throw new Error("Workflow execution timed out");
     const result = runtime.executePendingJobs(1);
-    if (result.error) {
-      const error = guestError(result.error);
-      result.error.dispose();
-      throw error;
-    }
+    if (result.error) throw guestError(result.error);
   }
   const state = context.getPromiseState(workflowPromise);
-  if (state.type === "rejected") {
-    const error = guestError(state.error);
-    state.error.dispose();
-    throw error;
-  }
+  if (state.type === "rejected") throw guestError(state.error);
   if (state.type === "fulfilled") {
     const resultJson = context.getString(state.value);
     state.value.dispose();
-    send({ kind: "result", resultJson });
+    send({ kind: "result", resultJson: checkIpcSize("result", resultJson) });
     finished = true;
+  } else if (pendingAgents.size === 0) {
+    throw new Error("Workflow is waiting on a promise that can never settle");
   }
 }
 
@@ -223,7 +240,6 @@ process.on("message", (message) => {
 async function run(source, argsJson) {
   const module = await newQuickJSWASMModuleFromVariant(variant);
   runtime = module.newRuntime();
-  runtime.setMemoryLimit(64 * 1024 * 1024);
   runtime.setMaxStackSize(512 * 1024);
   runtime.setInterruptHandler(() => Date.now() >= deadline);
   context = runtime.newContext();
@@ -232,7 +248,7 @@ async function run(source, argsJson) {
   args.dispose();
   const bridge = context.newFunction("bridge", (kindHandle, payloadHandle) => {
     const kind = context.getString(kindHandle);
-    const payloadJson = context.getString(payloadHandle);
+    const payloadJson = checkIpcSize(kind, context.getString(payloadHandle));
     if (kind === "phase") {
       send({ kind, payloadJson });
       return context.undefined;
@@ -247,11 +263,7 @@ async function run(source, argsJson) {
   deadline = Date.now() + 1000;
   const evaluate = (code) => {
     const result = context.evalCode(code, "workflow.js");
-    if (result.error) {
-      const error = guestError(result.error);
-      result.error.dispose();
-      throw error;
-    }
+    if (result.error) throw guestError(result.error);
     return result.value;
   };
   evaluate(BOOTSTRAP).dispose();

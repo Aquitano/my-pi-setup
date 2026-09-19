@@ -183,3 +183,33 @@ test("phase updates cannot flood the host IPC queue", async () => {
     /phase update budget/,
   );
 });
+
+test("guest memory is bounded and the run fails fast", async () => {
+  const started = Date.now();
+  await assert.rejects(
+    run('const a = []; for (;;) a.push("x".repeat(1 << 20));'),
+    /out of memory/,
+  );
+  assert.ok(Date.now() - started < 5_000);
+});
+
+test("stalled and hijacked workflows fail instead of hanging", async () => {
+  await assert.rejects(run("await new Promise(() => {});"), /can never settle/);
+  await assert.rejects(
+    run(`
+      Promise.prototype.finally = function (callback) { callback(); return this; };
+      agent("x").then(() => {});
+      return "done-early";
+    `),
+  );
+});
+
+test("throwing a promise reports a guest error", async () => {
+  await assert.rejects(
+    run("throw Promise.reject(new Error('inner'));"),
+    (error: Error) => {
+      assert.doesNotMatch(error.message, /not alive/);
+      return true;
+    },
+  );
+});

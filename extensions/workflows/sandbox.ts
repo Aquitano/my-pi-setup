@@ -107,29 +107,30 @@ export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
     const workerPath = realpathSync(
       fileURLToPath(new URL("./sandbox-child.cjs", import.meta.url)),
     );
-    const corePath = realpathSync(require.resolve("quickjs-emscripten-core"));
-    const variantPath = realpathSync(
-      require.resolve("@jitl/quickjs-singlefile-cjs-release-sync"),
+    const corePath = require.resolve("quickjs-emscripten-core");
+    const variantPath =
+      require.resolve("@jitl/quickjs-singlefile-cjs-release-sync");
+    const ffiTypesPath = createRequire(realpathSync(corePath)).resolve(
+      "@jitl/quickjs-ffi-types",
     );
-    const ffiTypesPath = realpathSync(
-      createRequire(corePath).resolve("@jitl/quickjs-ffi-types"),
-    );
-    const readableDirs = [
+    // Node reads package.json at the symlink path and the module at its real
+    // path, so a pnpm or linked install needs both readable.
+    const readableDirs = new Set([
       path.dirname(workerPath),
-      ...[corePath, variantPath, ffiTypesPath].map((entry) =>
-        path.dirname(path.dirname(entry)),
-      ),
-    ];
+      ...[corePath, variantPath, ffiTypesPath]
+        .flatMap((entry) => [entry, realpathSync(entry)])
+        .map((entry) => path.dirname(path.dirname(entry))),
+    ]);
     const child = spawn(
       process.execPath,
       [
         "--permission",
-        ...readableDirs.map((dir) => `--allow-fs-read=${dir}`),
+        ...[...readableDirs].map((dir) => `--allow-fs-read=${dir}`),
         "--max-old-space-size=128",
         "--stack-size=2048",
         workerPath,
-        corePath,
-        variantPath,
+        realpathSync(corePath),
+        realpathSync(variantPath),
       ],
       {
         cwd: options.cwd,
@@ -137,9 +138,13 @@ export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
           PATH: process.env.PATH ?? "",
           NODE_NO_WARNINGS: "1",
         },
-        stdio: ["ignore", "ignore", "ignore", "ipc"],
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
       },
     );
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-4096);
+    });
     const token = randomBytes(24).toString("hex");
     const requestIds = new Set<number>();
     const activeAgentRequests = new Map<number, AbortController>();
@@ -176,9 +181,10 @@ export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
     child.on("error", (error) => finish(error));
     child.on("exit", (code, exitSignal) => {
       if (!finished) {
+        const detail = stderr.trim();
         finish(
           new Error(
-            `Workflow sandbox exited before completion (${exitSignal ?? code ?? "unknown"})`,
+            `Workflow sandbox exited before completion (${exitSignal ?? code ?? "unknown"})${detail ? `: ${detail}` : ""}`,
           ),
         );
       }
