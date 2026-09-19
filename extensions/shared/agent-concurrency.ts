@@ -1,3 +1,4 @@
+import { writeUserConfig } from "./user-config.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -121,4 +122,12 @@ export function getAgentConcurrency() {
   const pool = (state[key] ??= new AgentConcurrency());
   pool.configure(loadAgentLimit());
   return pool;
+}
+
+export async function saveAgentLimit(value: number) {
+  const limit = parseAgentLimit(value);
+  await writeUserConfig(join(getAgentDir(), "concurrency.json"), {
+    maxRunning: limit,
+  });
+  getAgentConcurrency().configure(limit);
 }

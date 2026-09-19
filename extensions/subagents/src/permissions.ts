@@ -1,16 +1,17 @@
+import { writeUserConfig } from "../../shared/user-config.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-const CLAUDE_MODES = [
+export const CLAUDE_MODES = [
   "auto",
   "acceptEdits",
   "dontAsk",
   "plan",
   "bypassPermissions",
 ] as const;
-const CODEX_MODES = ["auto", "sandbox", "full-access"] as const;
+export const CODEX_MODES = ["auto", "sandbox", "full-access"] as const;
 
 function parseMode<const T extends string>(
   value: unknown,
@@ -82,4 +83,10 @@ export function codexPermissionOptions(mode: (typeof CODEX_MODES)[number]) {
     approvalPolicy: mode === "auto" ? "on-request" : "never",
     approvalsReviewer: mode === "auto" ? "auto_review" : "user",
   } as const;
+}
+
+export function saveSubagentPermissions(
+  config: ReturnType<typeof loadSubagentPermissions>,
+) {
+  return writeUserConfig(join(getAgentDir(), "subagents.json"), config);
 }

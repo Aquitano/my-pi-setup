@@ -24,6 +24,7 @@ export const REASONING_LEVELS = [
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
 export interface SummaryConfig {
+  readonly enabled?: boolean;
   readonly provider: string;
   readonly model: string;
   readonly reasoning: ReasoningLevel;
@@ -60,6 +61,7 @@ export function parseSummaryConfig(value: unknown) {
   }
 
   return {
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
     provider: value.provider.trim(),
     model: value.model.trim(),
     reasoning: value.reasoning,

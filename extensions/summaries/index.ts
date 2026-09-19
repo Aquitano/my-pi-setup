@@ -83,6 +83,7 @@ export default function (pi: ExtensionAPI) {
     if (entries.length === 0) return;
 
     const config = loadSummaryConfig();
+    if (config.enabled === false) return;
     const controller = new AbortController();
     statusContext = ctx;
     const task = (async () => {
@@ -162,6 +163,7 @@ export default function (pi: ExtensionAPI) {
       if (!reasoning) return;
 
       const config = {
+        ...current,
         provider: model.provider,
         model: model.id,
         reasoning,
