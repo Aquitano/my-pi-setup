@@ -18,16 +18,10 @@ import { Firecrawl, type CrawlJob, type CrawlOptions } from "firecrawl";
 import { Type } from "typebox";
 import {
   CRAWL_PARAMETER_DESCRIPTIONS,
-  CRAWL_PROMPT_GUIDELINES,
-  CRAWL_PROMPT_SNIPPET,
   CRAWL_TOOL_DESCRIPTION,
   SCRAPE_PARAMETER_DESCRIPTIONS,
-  SCRAPE_PROMPT_GUIDELINES,
-  SCRAPE_PROMPT_SNIPPET,
   SCRAPE_TOOL_DESCRIPTION,
   SEARCH_PARAMETER_DESCRIPTIONS,
-  SEARCH_PROMPT_GUIDELINES,
-  SEARCH_PROMPT_SNIPPET,
   SEARCH_TOOL_DESCRIPTION,
 } from "./prompt.ts";
 
@@ -237,8 +231,6 @@ export default function firecrawlTools(pi: ExtensionAPI) {
     name: "search",
     label: "Search Web",
     description: SEARCH_TOOL_DESCRIPTION,
-    promptSnippet: SEARCH_PROMPT_SNIPPET,
-    promptGuidelines: SEARCH_PROMPT_GUIDELINES,
     parameters: Type.Object({
       query: Type.String({
         description: SEARCH_PARAMETER_DESCRIPTIONS.query,
@@ -282,8 +274,6 @@ export default function firecrawlTools(pi: ExtensionAPI) {
     name: "crawl",
     label: "Crawl Website",
     description: CRAWL_TOOL_DESCRIPTION,
-    promptSnippet: CRAWL_PROMPT_SNIPPET,
-    promptGuidelines: CRAWL_PROMPT_GUIDELINES,
     parameters: Type.Object({
       url: Type.String({ description: CRAWL_PARAMETER_DESCRIPTIONS.url }),
       limit: Type.Optional(
@@ -363,8 +353,6 @@ export default function firecrawlTools(pi: ExtensionAPI) {
     name: "scrape",
     label: "Scrape Page",
     description: SCRAPE_TOOL_DESCRIPTION,
-    promptSnippet: SCRAPE_PROMPT_SNIPPET,
-    promptGuidelines: SCRAPE_PROMPT_GUIDELINES,
     parameters: Type.Object({
       url: Type.String({ description: SCRAPE_PARAMETER_DESCRIPTIONS.url }),
       onlyMainContent: Type.Optional(

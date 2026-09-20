@@ -21,6 +21,11 @@ import {
   Scope,
   Stream,
 } from "effect";
+import {
+  createWorktree,
+  removeWorktreeIfUnchanged,
+  type Worktree,
+} from "../../shared/worktree.ts";
 import type { SubagentBackend, SubagentSession } from "./backend.ts";
 import { BackendRegistry } from "./backend.ts";
 import type {
@@ -45,6 +50,8 @@ import {
 export const MAX_RUNNING = 4;
 export const MAX_TRACKED = 64;
 const STOP_TIMEOUT_MS = 5_000;
+/** Extra close budget for entries whose finalizer also runs git worktree cleanup. */
+const WORKTREE_CLEANUP_TIMEOUT_MS = 15_000;
 const ERROR_TEXT_MAX_LENGTH = 4_096;
 const TRANSCRIPT_TEXT_MAX_LENGTH = 64 * 1_024;
 const LIVE_ASSISTANT_MAX_LENGTH = 128 * 1_024;
@@ -79,6 +86,7 @@ interface MutableSnapshot {
   title: string;
   prompt: string;
   cwd: string;
+  worktree?: Worktree;
   status: SubagentStatus;
   createdAt: number;
   settledAt?: number;
@@ -174,6 +182,36 @@ export class SubagentManager extends Context.Service<
 
 // --- Implementation --------------------------------------------------------------
 
+/**
+ * Create the isolation worktree (when requested) and remove it on scope close
+ * if untouched. `owner.snapshot` is filled in once the entry exists so a
+ * successful removal also clears the snapshot's worktree reference.
+ */
+const provisionWorktree = (
+  task: SpawnTask,
+  owner: { snapshot?: MutableSnapshot },
+) =>
+  Effect.gen(function* () {
+    if (task.isolation !== "worktree") return undefined;
+    const result = yield* Effect.promise(() =>
+      createWorktree({ cwd: task.cwd, name: task.title }),
+    );
+    if (!result.ok) {
+      return yield* new SpawnError({
+        message: `Cannot create worktree: ${result.error}`,
+      });
+    }
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(async () => {
+        const removal = await removeWorktreeIfUnchanged(result.worktree);
+        if (removal.removed && owner.snapshot) {
+          owner.snapshot.worktree = undefined;
+        }
+      }).pipe(Effect.ignore),
+    );
+    return result.worktree;
+  });
+
 const makeManager = Effect.gen(function* () {
   const registry = yield* BackendRegistry;
   // Detached forker for sync contexts (read-model commands, pruning) that
@@ -247,6 +285,11 @@ const makeManager = Effect.gen(function* () {
 
   const closeEntryScope = (entry: Entry) =>
     Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+
+  const closeTimeout = (entry: Entry) =>
+    entry.snapshot.worktree
+      ? STOP_TIMEOUT_MS + WORKTREE_CLEANUP_TIMEOUT_MS
+      : STOP_TIMEOUT_MS;
 
   const pruneSettled = () => {
     if (entries.size <= MAX_TRACKED) return;
@@ -457,20 +500,37 @@ const makeManager = Effect.gen(function* () {
         }
 
         const scope = yield* Scope.make();
-        const session = yield* Scope.provide(backend.spawn(task), scope).pipe(
-          Effect.onError(() => Scope.close(scope, Exit.void)),
+        const worktreeOwner: { snapshot?: MutableSnapshot } = {};
+        // Every yield point before the entry is registered (worktree
+        // creation, backend spawn, the meta read) runs inside `create`, so an
+        // interrupt or failure there closes the scope and kills whatever was
+        // already started instead of leaking it.
+        const create = Effect.gen(function* () {
+          // The worktree finalizer is registered before the backend's, so it
+          // runs after the child session is gone and its files are settled.
+          const worktree = yield* provisionWorktree(task, worktreeOwner);
+          const childTask = worktree ? { ...task, cwd: worktree.path } : task;
+          const session = yield* backend.spawn(childTask);
+          if (disposed) {
+            return yield* new SpawnError({
+              message: "Subagent manager shut down while spawning.",
+            });
+          }
+          const meta = yield* session.meta;
+          return { worktree, childTask, session, meta };
+        });
+        const { worktree, childTask, session, meta } = yield* Scope.provide(
+          create,
+          scope,
+        ).pipe(
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) ? Scope.close(scope, Exit.void) : Effect.void,
+          ),
         );
-        if (disposed) {
-          yield* Scope.close(scope, Exit.void);
-          return yield* new SpawnError({
-            message: "Subagent manager shut down while spawning.",
-          });
-        }
 
         const origin = task.origin ?? "model";
         const id =
           origin === "btw" ? `btw-${++btwCounter}` : `sa-${++modelCounter}`;
-        const meta = yield* session.meta;
         const entry: Entry = {
           snapshot: {
             id,
@@ -478,7 +538,8 @@ const makeManager = Effect.gen(function* () {
             backend: backendName,
             title: task.title,
             prompt: task.prompt,
-            cwd: task.cwd,
+            cwd: childTask.cwd,
+            worktree,
             status: "running",
             createdAt: Date.now(),
             meta,
@@ -493,6 +554,7 @@ const makeManager = Effect.gen(function* () {
           scope,
           liveToolMap: new Map(),
         };
+        worktreeOwner.snapshot = entry.snapshot;
         entries.set(id, entry);
 
         // Pump: fold the event stream into the snapshot. Tied to the entry
@@ -576,7 +638,7 @@ const makeManager = Effect.gen(function* () {
         // Bound the close like disposeAll does: a stuck backend finalizer
         // must not hang cancel after the run is already settled.
         yield* closeEntryScope(entry).pipe(
-          Effect.timeout(STOP_TIMEOUT_MS),
+          Effect.timeout(closeTimeout(entry)),
           Effect.ignore,
         );
       }
@@ -664,7 +726,7 @@ const makeManager = Effect.gen(function* () {
       all,
       (entry) =>
         closeEntryScope(entry).pipe(
-          Effect.timeout(STOP_TIMEOUT_MS),
+          Effect.timeout(closeTimeout(entry)),
           Effect.ignore,
         ),
       { concurrency: "unbounded" },

@@ -7,6 +7,8 @@ description: Run and manage long-lived shell commands in background terminals. U
 
 Use `bg_start` for long-running commands; use regular `bash` for quick commands.
 
+The terminal tools are deferred. If `bg_start` is not in your active tools, call `load_tools` with `groups: ["terminals"]` first.
+
 ## Start
 
 Call `bg_start` with:

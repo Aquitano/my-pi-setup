@@ -27,16 +27,8 @@ export const BG_START_TOOL_DESCRIPTION =
   "Fire-and-forget: this returns immediately with an id, and you get a message with the final output when the process exits. " +
   "The process receives NO stdin (immediate EOF) and there is no way to send input later — interactive commands will not work; use bg_kill to stop a stuck one. " +
   `Terminals are session-scoped: they are killed when the session ends or reloads. Output shown to you is tail-truncated (stdout ${formatSize(STATUS_STDOUT_MAX)}, stderr ${formatSize(STATUS_STDERR_MAX)}); the full logs are captured to files and in the /ps viewer. ` +
-  `Max ${MAX_RUNNING} background terminals can run at once.`;
-
-export const BG_START_PROMPT_SNIPPET =
-  "Run a long-lived shell command in the background (dev servers, builds, watchers); output is captured and you're notified on exit";
-
-export const BG_START_PROMPT_GUIDELINES = [
-  "Use bg_start for commands expected to run long or indefinitely (servers, watch modes, long builds); use the regular bash tool for quick commands.",
-  "bg_start processes receive no stdin — never start a command that requires interactive input.",
-  "After bg_start, keep working; the exit result arrives automatically. Use bg_status only when you need current output before continuing.",
-];
+  `Max ${MAX_RUNNING} background terminals can run at once.` +
+  " Use bg_start for commands expected to run long or indefinitely (servers, watch modes, long builds); use the regular bash tool for quick commands. bg_start processes receive no stdin — never start a command that requires interactive input. After bg_start, keep working; the exit result arrives automatically. Use bg_status only when you need current output before continuing.";
 
 export const BG_START_PARAMETER_DESCRIPTIONS = {
   command:

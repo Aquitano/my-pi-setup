@@ -1,14 +1,11 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
-type Theme = ExtensionContext["ui"]["theme"];
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { stateGlyph } from "./glyphs.ts";
 
 interface ActivityCounts {
   running: number;
   done: number;
   failed: number;
 }
-
-const SQUARE = "■";
 
 export function formatActivityStatus(
   theme: Theme,
@@ -17,13 +14,19 @@ export function formatActivityStatus(
 ) {
   const parts: string[] = [];
   if (counts.running > 0) {
-    parts.push(theme.fg("warning", `${SQUARE} ${counts.running} running`));
+    parts.push(
+      `${stateGlyph(theme, "running")} ${theme.fg("warning", `${counts.running} running`)}`,
+    );
   }
   if (counts.done > 0) {
-    parts.push(theme.fg("success", `${SQUARE} ${counts.done} done`));
+    parts.push(
+      `${stateGlyph(theme, "done")} ${theme.fg("success", `${counts.done} done`)}`,
+    );
   }
   if (counts.failed > 0) {
-    parts.push(theme.fg("error", `${SQUARE} ${counts.failed} failed`));
+    parts.push(
+      `${stateGlyph(theme, "failed")} ${theme.fg("error", `${counts.failed} failed`)}`,
+    );
   }
   parts.push(theme.fg("accent", `/${label}`) + theme.fg("dim", " to view"));
 

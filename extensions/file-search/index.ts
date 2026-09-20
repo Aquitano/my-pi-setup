@@ -66,6 +66,15 @@ export function makeBinaryInitializers(
   };
 }
 
+/** Built-ins that fd and rg replace; removed while both binaries are usable. */
+const SUPERSEDED_BUILTIN_TOOLS = ["find", "grep"] as const;
+
+export function withoutSupersededTools(activeTools: readonly string[]) {
+  return activeTools.filter(
+    (name) => !(SUPERSEDED_BUILTIN_TOOLS as readonly string[]).includes(name),
+  );
+}
+
 /** Human-readable install notice, shown only for fresh downloads. */
 export function installNotifications(binaries: readonly ResolvedBinary[]) {
   return binaries
@@ -133,6 +142,13 @@ export default function fileSearchTools(pi: ExtensionAPI) {
           },
           { concurrency: "unbounded" },
         );
+        if (Exit.isSuccess(initialized.fd) && Exit.isSuccess(initialized.rg)) {
+          // Read the active list only after the await above: other
+          // session_start handlers (deferred-tools) also edit it.
+          const active = pi.getActiveTools();
+          const remaining = withoutSupersededTools(active);
+          if (remaining.length !== active.length) pi.setActiveTools(remaining);
+        }
         if (!ctx.hasUI || notified) return;
 
         notified = true;

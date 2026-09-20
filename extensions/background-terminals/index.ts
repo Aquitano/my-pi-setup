@@ -25,9 +25,8 @@ import type {
   ExtensionContext,
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { renderResultCard } from "../shared/result-card.ts";
 import type { TerminalSnapshot } from "./src/domain.ts";
 import { TerminalManager, type TerminalManagerShape } from "./src/manager.ts";
 import {
@@ -35,8 +34,6 @@ import {
   BG_KILL_TOOL_DESCRIPTION,
   BG_LIST_TOOL_DESCRIPTION,
   BG_START_PARAMETER_DESCRIPTIONS,
-  BG_START_PROMPT_GUIDELINES,
-  BG_START_PROMPT_SNIPPET,
   BG_START_TOOL_DESCRIPTION,
   BG_STATUS_PARAMETER_DESCRIPTIONS,
   BG_STATUS_TOOL_DESCRIPTION,
@@ -207,8 +204,6 @@ export default function (pi: ExtensionAPI) {
     name: "bg_start",
     label: "Start Background Terminal",
     description: BG_START_TOOL_DESCRIPTION,
-    promptSnippet: BG_START_PROMPT_SNIPPET,
-    promptGuidelines: BG_START_PROMPT_GUIDELINES,
     parameters: Type.Object({
       command: Type.String({
         description: BG_START_PARAMETER_DESCRIPTIONS.command,
@@ -371,48 +366,22 @@ export default function (pi: ExtensionAPI) {
       };
       const failed = details.status === "failed";
       const killed = details.status === "killed";
-      const icon = failed
-        ? theme.fg("error", "x")
-        : killed
-          ? theme.fg("muted", "■")
-          : theme.fg("success", "■");
       const how = killed
         ? "killed"
         : (details.signal ?? `exit ${details.exitCode ?? "?"}`);
-      const header =
-        `${icon} ` +
-        theme.fg("accent", theme.bold(`terminal ${details.id ?? "?"}`)) +
-        theme.fg("muted", ` · ${details.title ?? ""} · ${how}`);
-
       const content =
         typeof message.content === "string" ? message.content : "";
       // Remove only the summary line; the Error line (when present) is part
       // of the actual result and must remain visible. The body carries raw
       // process output — sanitize ANSI/control chars or the transcript smears.
       const body = sanitizeText(content.split("\n").slice(1).join("\n").trim());
-
-      if (expanded) {
-        const md = new Markdown(`${body}`, 0, 0, getMarkdownTheme());
-        const container = new Text(header, 0, 0);
-        return {
-          render: (width: number) => [
-            ...container.render(width),
-            ...md.render(width),
-          ],
-          invalidate: () => {
-            container.invalidate();
-            md.invalidate();
-          },
-        };
-      }
-
-      const previewLines = body.split("\n").slice(0, 8);
-      let text = header;
-      for (const line of previewLines)
-        text += `\n${theme.fg("toolOutput", line)}`;
-      if (body.split("\n").length > 8)
-        text += `\n${theme.fg("dim", "... (ctrl+o to expand)")}`;
-      return new Text(text, 0, 0);
+      return renderResultCard(theme, {
+        state: failed ? "failed" : killed ? "cancelled" : "done",
+        title: `terminal ${details.id ?? "?"}`,
+        subtitle: `${details.title ?? ""} · ${how}`,
+        body,
+        expanded,
+      });
     },
   );
 

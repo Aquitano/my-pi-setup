@@ -13,6 +13,7 @@ import {
 import { Box, Markdown, Text } from "@earendil-works/pi-tui";
 import type { ReasoningLevel, SummaryConfig } from "./config.ts";
 import type { RunRecap } from "./summarizer.ts";
+import { SQUARE } from "../../shared/glyphs.ts";
 
 export interface RecapEntryData extends RunRecap {
   readonly provider: string;
@@ -35,7 +36,7 @@ class RecapCard {
   render(width: number) {
     const box = new Box(1, 1, (text) => this.theme.bg("customMessageBg", text));
     const title =
-      this.theme.fg("accent", "✦ ") +
+      this.theme.fg("accent", `${SQUARE} `) +
       this.theme.fg("customMessageLabel", this.theme.bold("Run recap"));
     box.addChild(new Text(title, 0, 0));
     box.addChild(

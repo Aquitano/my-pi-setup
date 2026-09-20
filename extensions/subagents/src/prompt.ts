@@ -2,7 +2,7 @@
 
 /** Describes subagent_spawn, including harnesses and the fixed concurrency cap. */
 export const SUBAGENT_SPAWN_TOOL_DESCRIPTION =
-  "Spawn a background subagent: a headless agent with its own context window and user-configured permissions. Claude and Codex default to automatic permission review; denied actions stay denied. You choose the harness it runs on: pi (in-process pi session, inherits this environment's tools and config), claude (Claude Code), or codex (Codex CLI). Fire-and-forget: this returns immediately with an id. The subagent's final output is queued back to you as a message when it settles, or collect it explicitly with subagent_wait. Children cannot orchestrate more agents/workflows or ask the user, and cannot see this conversation, so the prompt must be self-contained. Only use trusted working directories. Max 4 subagents can be running at once across all harnesses.";
+  "Spawn a background subagent: a headless agent with its own context window and user-configured permissions. Claude and Codex default to automatic permission review; denied actions stay denied. You choose the harness it runs on: pi (in-process pi session, inherits this environment's tools and config), claude (Claude Code), or codex (Codex CLI). Fire-and-forget: this returns immediately with an id. The subagent's final output is queued back to you as a message when it settles, or collect it explicitly with subagent_wait. Children cannot orchestrate more agents/workflows or ask the user, and cannot see this conversation, so the prompt must be self-contained. Only use trusted working directories. Pass isolation: \"worktree\" when the child will edit files while other work touches the same repository: it then runs in its own git worktree on a fresh branch, and the result reports that branch for you to inspect or merge. Max 4 subagents can be running at once across all harnesses.";
 
 /** Adds background subagent delegation to the parent model's available-tools prompt. */
 export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
@@ -28,6 +28,8 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
     'Model hint, interpreted by the chosen harness (pi: "provider/model-id" or model id; claude: model alias like "sonnet"/"opus"; codex: model slug). Omit for the harness default (pi inherits the current model).',
   reasoningEffort:
     "Reasoning effort on a shared scale; the harness maps it to its nearest native equivalent (pi thinking level, codex reasoning effort, claude thinking budget). Omit for the harness default (pi inherits the current level).",
+  isolation:
+    '"worktree" runs the child in a fresh git worktree (own branch off HEAD, under ~/.pi/agent/worktrees). Use it whenever concurrent subagents edit the same repository. The worktree starts from the last commit: uncommitted changes and ignored files such as node_modules or .env are not carried over, so commit first or tell the child to install what it needs. Untouched worktrees are removed automatically; changed ones are kept and reported.',
 };
 
 /** Builds the subagent_spawn result that tells the parent model how to continue or inspect the child. */
@@ -37,9 +39,13 @@ export function buildSubagentSpawnResult(options: {
   harness: string;
   modelLabel: string;
   cwd: string;
+  branch?: string;
 }) {
+  const where = options.branch
+    ? `worktree ${options.cwd} on branch ${options.branch}`
+    : options.cwd;
   return (
-    `Spawned subagent ${options.id} "${options.title}" (${options.harness}: ${options.modelLabel}, ${options.cwd}).\n` +
+    `Spawned subagent ${options.id} "${options.title}" (${options.harness}: ${options.modelLabel}, ${where}).\n` +
     `It runs in the background. Its result will be delivered to you when it finishes, ` +
     `or use subagent_wait(ids: ["${options.id}"]) to block for it, subagent_cancel to stop it, subagent_check to peek, subagent_list to see all.`
   );
@@ -83,10 +89,14 @@ export function buildSubagentResultMessage(options: {
   status: "running" | "done" | "error";
   errorText?: string;
   output: string;
+  worktree?: { path: string; branch: string };
 }) {
   const verb = options.status === "error" ? "failed" : "finished";
   let text = `Subagent ${options.id} "${options.title}" ${verb}.`;
   if (options.errorText) text += `\nError: ${options.errorText}`;
+  if (options.worktree) {
+    text += `\nIt left changes in worktree ${options.worktree.path} on branch ${options.worktree.branch}. Inspect with \`git diff HEAD...${options.worktree.branch}\` or merge that branch.`;
+  }
   text += `\n\n${options.output}`;
   return text;
 }

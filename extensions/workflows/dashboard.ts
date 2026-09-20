@@ -45,6 +45,7 @@ import {
   type TranscriptEntry,
   type WorkflowDetails,
 } from "./model.ts";
+import { POINTER } from "../shared/glyphs.ts";
 
 const NOTICE_TTL_MS = 4000;
 const MIN_HEIGHT = 10;
@@ -729,7 +730,7 @@ export class WorkflowDashboard {
       const index = offset + i;
       const selected = index === this.listIndex;
       const d = entry.details;
-      const marker = selected ? theme.fg("accent", "❯") : " ";
+      const marker = selected ? theme.fg("accent", POINTER) : " ";
       const name = d.name ?? d.runId;
       const label = selected
         ? theme.fg("accent", name)
@@ -806,7 +807,7 @@ export class WorkflowDashboard {
       const index = phaseWindow.offset + i;
       const selected = index === this.phaseIndex;
       const marker = selected
-        ? theme.fg(this.detailFocus === "phases" ? "accent" : "muted", "❯")
+        ? theme.fg(this.detailFocus === "phases" ? "accent" : "muted", POINTER)
         : " ";
       const groupDone = group.agents.filter(
         (a) => a.state !== "running",
@@ -842,7 +843,7 @@ export class WorkflowDashboard {
         const selected = index === this.agentIndex;
         const marker =
           selected && this.detailFocus === "agents"
-            ? theme.fg("accent", "❯")
+            ? theme.fg("accent", POINTER)
             : " ";
         const stats = [agent.model, agentContext(agent)]
           .filter(Boolean)

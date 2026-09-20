@@ -9,6 +9,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { formatContextUtilization } from "../shared/context-utilization.ts";
+import { stateColor, stateGlyph, SQUARE } from "../shared/glyphs.ts";
 import { safeStringify } from "./serialization.ts";
 
 export type Theme = ExtensionContext["ui"]["theme"];
@@ -73,6 +74,8 @@ export interface AgentRecord {
   error?: string;
   preview: string;
   usage: AgentUsage;
+  /** Git worktree the agent ran in, when isolation was requested. */
+  worktree?: { path: string; branch: string };
   /** Normalized, serializable subagent conversation shown by /workflows. */
   transcript: TranscriptEntry[];
 }
@@ -96,31 +99,28 @@ export interface WorkflowDetails {
   error?: string;
 }
 
-/** Colored square state indicator (no emojis/glyphs). */
-export const SQUARE = "■";
+export { SQUARE };
 
-export function stateSquare(state: AgentState, theme: Theme): string {
-  if (state === "done") return theme.fg("success", SQUARE);
-  if (state === "error") return theme.fg("error", SQUARE);
-  return theme.fg("warning", SQUARE);
+export function stateSquare(state: AgentState, theme: Theme) {
+  return stateGlyph(theme, state === "error" ? "failed" : state);
 }
 
-export function statusSquare(status: WorkflowStatus, theme: Theme): string {
-  if (status === "completed") return theme.fg("success", SQUARE);
-  if (status === "running") return theme.fg("warning", SQUARE);
-  return theme.fg("error", SQUARE);
+function statusState(status: WorkflowStatus) {
+  if (status === "completed") return "done";
+  if (status === "running") return "running";
+  return "failed";
 }
 
-export function statusWord(status: WorkflowStatus): string {
+export function statusSquare(status: WorkflowStatus, theme: Theme) {
+  return stateGlyph(theme, statusState(status));
+}
+
+export function statusWord(status: WorkflowStatus) {
   return status === "completed" ? "done" : status;
 }
 
-export function statusColor(
-  status: WorkflowStatus,
-): "success" | "warning" | "error" {
-  if (status === "completed") return "success";
-  if (status === "running") return "warning";
-  return "error";
+export function statusColor(status: WorkflowStatus) {
+  return stateColor(statusState(status));
 }
 
 export function shortenHome(p: string): string {
