@@ -4,14 +4,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { createWorktree, removeWorktreeIfUnchanged } from "./worktree.ts";
+import {
+  createWorktree,
+  gitEnv,
+  removeWorktreeIfUnchanged,
+} from "./worktree.ts";
 
 function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-"));
   const repo = path.join(dir, "repo");
   fs.mkdirSync(repo);
   const run = (args: string[]) =>
-    execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+    execFileSync("git", args, { cwd: repo, stdio: "ignore", env: gitEnv() });
   run(["init", "-q", "-b", "main"]);
   run(["config", "user.email", "test@example.com"]);
   run(["config", "user.name", "test"]);
@@ -42,6 +46,7 @@ test("worktree is created on its own branch and removed when unchanged", async (
   assert.ok(!fs.existsSync(worktree.path));
   const branches = execFileSync("git", ["branch", "--list", worktree.branch], {
     cwd: repo,
+    env: gitEnv(),
   }).toString();
   assert.equal(branches.trim(), "");
 });
@@ -75,11 +80,11 @@ test("committed work keeps the worktree even with a clean status", async (t) => 
   assert.ok(result.ok, result.ok ? "" : result.error);
   const cwd = result.worktree.path;
   fs.writeFileSync(path.join(cwd, "c.txt"), "c\n");
-  execFileSync("git", ["add", "c.txt"], { cwd });
+  execFileSync("git", ["add", "c.txt"], { cwd, env: gitEnv() });
   execFileSync("git", ["commit", "-q", "-m", "child work"], {
     cwd,
     env: {
-      ...process.env,
+      ...gitEnv(),
       GIT_AUTHOR_NAME: "t",
       GIT_AUTHOR_EMAIL: "t@example.com",
       GIT_COMMITTER_NAME: "t",
@@ -106,7 +111,39 @@ test("a worktree directory deleted from outside still gets its branch removed", 
   const branches = execFileSync(
     "git",
     ["branch", "--list", result.worktree.branch],
-    { cwd: repo },
+    { cwd: repo, env: gitEnv() },
   ).toString();
   assert.equal(branches.trim(), "");
+});
+
+test("a deleted worktree directory keeps its branch when the branch has commits", async (t) => {
+  const { dir, repo, agentDir } = makeRepo();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const result = await createWorktree({ cwd: repo, name: "kept", agentDir });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  const cwd = result.worktree.path;
+  fs.writeFileSync(path.join(cwd, "d.txt"), "d\n");
+  execFileSync("git", ["add", "d.txt"], { cwd, env: gitEnv() });
+  execFileSync("git", ["commit", "-q", "-m", "child work"], {
+    cwd,
+    env: {
+      ...gitEnv(),
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    },
+  });
+  fs.rmSync(cwd, { recursive: true, force: true });
+
+  assert.deepEqual(await removeWorktreeIfUnchanged(result.worktree), {
+    removed: false,
+  });
+  const branches = execFileSync(
+    "git",
+    ["branch", "--list", result.worktree.branch],
+    { cwd: repo, env: gitEnv() },
+  ).toString();
+  assert.ok(branches.includes(result.worktree.branch), branches);
 });

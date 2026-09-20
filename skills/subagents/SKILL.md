@@ -60,7 +60,7 @@ Requires the Codex CLI to be installed and authenticated.
 
 Call `subagent_spawn` with a complete `prompt`, short `name`, chosen `harness`, and optional `working_dir`, `model`, `reasoning_effort`, and `isolation`. At most four subagents run concurrently.
 
-Set `isolation: "worktree"` whenever a subagent will edit files while you or another subagent may touch the same repository. The child then works in its own git worktree on a fresh branch. Its result names the branch; inspect it with `git diff HEAD...<branch>` and merge or cherry-pick what you want. Worktrees left untouched are removed automatically.
+Set `isolation: "worktree"` whenever a subagent will edit files while you or another subagent may touch the same repository. The child then works in its own git worktree on a fresh branch. Its result names the worktree path and branch. Uncommitted edits stay in that directory (`git -C <path> status`), committed work is on the branch (`git diff HEAD...<branch>`); commit or copy what you want, then merge or cherry-pick. Worktrees left untouched are removed automatically.
 
 - `subagent_check({ id })`: peek without blocking.
 - `subagent_list()`: list all runs.

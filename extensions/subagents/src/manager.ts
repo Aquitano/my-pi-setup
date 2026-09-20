@@ -184,8 +184,10 @@ export class SubagentManager extends Context.Service<
 
 /**
  * Create the isolation worktree (when requested) and remove it on scope close
- * if untouched. `owner.snapshot` is filled in once the entry exists so a
- * successful removal also clears the snapshot's worktree reference.
+ * if untouched. Acquisition is uninterruptible and the release is registered
+ * atomically, so an interrupted spawn cannot orphan a half-created worktree.
+ * `owner.snapshot` is filled in once the entry exists so a successful removal
+ * also clears the snapshot's worktree reference.
  */
 const provisionWorktree = (
   task: SpawnTask,
@@ -193,22 +195,23 @@ const provisionWorktree = (
 ) =>
   Effect.gen(function* () {
     if (task.isolation !== "worktree") return undefined;
-    const result = yield* Effect.promise(() =>
-      createWorktree({ cwd: task.cwd, name: task.title }),
+    const result = yield* Effect.acquireRelease(
+      Effect.promise(() => createWorktree({ cwd: task.cwd, name: task.title })),
+      (created) =>
+        created.ok
+          ? Effect.promise(async () => {
+              const removal = await removeWorktreeIfUnchanged(created.worktree);
+              if (removal.removed && owner.snapshot) {
+                owner.snapshot.worktree = undefined;
+              }
+            }).pipe(Effect.ignore)
+          : Effect.void,
     );
     if (!result.ok) {
       return yield* new SpawnError({
         message: `Cannot create worktree: ${result.error}`,
       });
     }
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        const removal = await removeWorktreeIfUnchanged(result.worktree);
-        if (removal.removed && owner.snapshot) {
-          owner.snapshot.worktree = undefined;
-        }
-      }).pipe(Effect.ignore),
-    );
     return result.worktree;
   });
 

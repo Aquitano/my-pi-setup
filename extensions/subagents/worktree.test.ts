@@ -18,12 +18,13 @@ const { BackendRegistry } = await import("./src/backend.ts");
 const { makeStubBackend } = await import("./src/backends/stub.ts");
 const { SubagentManager, SubagentManagerLive } =
   await import("./src/manager.ts");
+const { gitEnv } = await import("../shared/worktree.ts");
 
 function makeRepo() {
   const repo = path.join(tmp, "repo");
   fs.mkdirSync(repo);
   const run = (args: string[]) =>
-    execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+    execFileSync("git", args, { cwd: repo, stdio: "ignore", env: gitEnv() });
   run(["init", "-q", "-b", "main"]);
   run(["config", "user.email", "test@example.com"]);
   run(["config", "user.name", "test"]);
@@ -79,6 +80,7 @@ test("isolated subagents run in their own worktree, removed on dispose when unto
   assert.equal(snap.worktree, undefined, "snapshot forgets a removed worktree");
   const branches = execFileSync("git", ["branch", "--list", "pi/*"], {
     cwd: repo,
+    env: gitEnv(),
   }).toString();
   assert.equal(branches.trim(), "", "branch removed with the worktree");
 

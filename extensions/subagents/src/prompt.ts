@@ -95,7 +95,7 @@ export function buildSubagentResultMessage(options: {
   let text = `Subagent ${options.id} "${options.title}" ${verb}.`;
   if (options.errorText) text += `\nError: ${options.errorText}`;
   if (options.worktree) {
-    text += `\nIt left changes in worktree ${options.worktree.path} on branch ${options.worktree.branch}. Inspect with \`git diff HEAD...${options.worktree.branch}\` or merge that branch.`;
+    text += `\nIt left changes in worktree ${options.worktree.path} on branch ${options.worktree.branch}. Uncommitted edits live in that directory (\`git -C ${options.worktree.path} status\`); committed work is on the branch (\`git diff HEAD...${options.worktree.branch}\`). Commit or copy what you want to keep, then merge or cherry-pick the branch.`;
   }
   text += `\n\n${options.output}`;
   return text;

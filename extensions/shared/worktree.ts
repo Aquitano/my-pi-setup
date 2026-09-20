@@ -6,6 +6,15 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const GIT_TIMEOUT_MS = 10_000;
 
+/** Repository-location overrides from the parent shell must not redirect these commands away from `cwd`. */
+export function gitEnv(base: NodeJS.ProcessEnv = process.env) {
+  const { GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...env } = base;
+  void GIT_DIR;
+  void GIT_WORK_TREE;
+  void GIT_INDEX_FILE;
+  return env;
+}
+
 export interface Worktree {
   readonly path: string;
   readonly branch: string;
@@ -25,7 +34,12 @@ function git(args: string[], cwd: string) {
       execFile(
         "git",
         args,
-        { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+        {
+          cwd,
+          env: gitEnv(),
+          timeout: GIT_TIMEOUT_MS,
+          maxBuffer: 4 * 1024 * 1024,
+        },
         (error, stdout, stderr) => {
           const code =
             error && "code" in error && typeof error.code === "number"
@@ -78,6 +92,7 @@ export async function createWorktree(options: {
       error: "Repository has no commits yet; a worktree needs a base commit",
     };
   }
+  const baseCommit = head.stdout.trim();
   const slug = worktreeSlug(options.name);
   const branch = `pi/${slug}`;
   const worktreePath = path.join(
@@ -95,7 +110,7 @@ export async function createWorktree(options: {
   }
   await git(["worktree", "prune"], repoRoot);
   const added = await git(
-    ["worktree", "add", "-b", branch, worktreePath, "HEAD"],
+    ["worktree", "add", "-b", branch, worktreePath, baseCommit],
     repoRoot,
   );
   if (added.code !== 0) {
@@ -109,19 +124,27 @@ export async function createWorktree(options: {
     worktree: {
       path: worktreePath,
       branch,
-      baseCommit: head.stdout.trim(),
+      baseCommit,
       repoRoot,
     },
   };
 }
 
-/** True when the worktree has uncommitted edits or commits beyond its base. A failing git call counts as changed. */
+/**
+ * True when the worktree has uncommitted edits or commits beyond its base.
+ * Without the directory, the branch tip alone decides. A failing git call
+ * counts as changed.
+ */
 export async function worktreeHasChanges(worktree: Worktree) {
-  if (!fs.existsSync(worktree.path)) return false;
-  const status = await git(["status", "--porcelain"], worktree.path);
-  if (status.code !== 0 || status.stdout.trim()) return true;
-  const head = await git(["rev-parse", "HEAD"], worktree.path);
-  return head.code !== 0 || head.stdout.trim() !== worktree.baseCommit;
+  if (fs.existsSync(worktree.path)) {
+    const status = await git(["status", "--porcelain"], worktree.path);
+    if (status.code !== 0 || status.stdout.trim()) return true;
+  }
+  const tip = await git(
+    ["rev-parse", "--verify", `refs/heads/${worktree.branch}`],
+    worktree.repoRoot,
+  );
+  return tip.code !== 0 || tip.stdout.trim() !== worktree.baseCommit;
 }
 
 /** Remove the worktree and its branch when nothing was changed or committed. */

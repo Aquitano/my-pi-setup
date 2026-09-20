@@ -518,6 +518,7 @@ export default function workflows(pi: ExtensionAPI) {
         if (controller.signal.aborted)
           return fail("Workflow was aborted before this agent started");
 
+        let cleanupError: string | undefined;
         return controller
           .schedule(async (runSignal) => {
             // Model/provider resolution: default to the parent session's model.
@@ -656,18 +657,30 @@ export default function workflows(pi: ExtensionAPI) {
                 );
                 if (removal.removed) delete record.worktree;
                 else if (removal.error) {
+                  cleanupError = `worktree cleanup failed: ${removal.error}`;
+                  record.state = "error";
                   record.error = record.error
-                    ? `${record.error}; worktree cleanup failed: ${removal.error}`
-                    : `Worktree cleanup failed: ${removal.error}`;
+                    ? `${record.error}; ${cleanupError}`
+                    : cleanupError;
                 }
               }
               emit();
             }
           }, invocationSignal)
-          .then((result) =>
-            record.worktree ? { ...result, worktree: record.worktree } : result,
-          )
-          .catch((error) => fail(errorText(error)));
+          .catch((error) => fail(errorText(error)))
+          .then((result): ScriptAgentResult => {
+            const withWorktree = record.worktree
+              ? { ...result, worktree: record.worktree }
+              : result;
+            if (!cleanupError) return withWorktree;
+            return {
+              ...withWorktree,
+              ok: false,
+              error: withWorktree.error
+                ? `${withWorktree.error}; ${cleanupError}`
+                : cleanupError,
+            };
+          });
       };
 
       const runScript = async () => {

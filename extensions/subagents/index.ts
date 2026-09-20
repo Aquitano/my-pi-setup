@@ -204,8 +204,14 @@ export default function (pi: ExtensionAPI) {
     );
   };
 
+  // Deliveries await a git check each, so chain them to keep settlement order.
+  let deliveryChain = Promise.resolve();
   const flushResults = () => {
-    for (const snap of resultDelivery.drain()) void deliverResult(snap);
+    for (const snap of resultDelivery.drain()) {
+      deliveryChain = deliveryChain
+        .then(() => deliverResult(snap))
+        .catch(() => undefined);
+    }
   };
 
   const deliverBtwResult = (snap: SubagentSnapshot) => {
