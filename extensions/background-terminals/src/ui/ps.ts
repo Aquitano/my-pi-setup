@@ -18,6 +18,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatElapsed, formatExit, type TerminalSnapshot } from "../domain.ts";
 import type { TerminalReadModel } from "../manager.ts";
 import { createOutputLineCache, sanitizeText } from "./output-view.ts";
+import { POINTER, stateGlyph, stateWord } from "../../../shared/glyphs.ts";
 
 /** One-line-safe rendering of model-provided text (titles, commands): a
  * newline or control char inside a fixed-height row desyncs the renderer. */
@@ -32,30 +33,16 @@ function configuredKeys(
   return keybindings.getKeys(binding).join("/") || "unbound";
 }
 
+function activityState(snap: TerminalSnapshot) {
+  return snap.status === "killed" ? "cancelled" : snap.status;
+}
+
 function statusGlyph(snap: TerminalSnapshot, theme: Theme) {
-  switch (snap.status) {
-    case "running":
-      return theme.fg("warning", "■");
-    case "done":
-      return theme.fg("success", "■");
-    case "failed":
-      return theme.fg("error", "■");
-    case "killed":
-      return theme.fg("muted", "■");
-  }
+  return stateGlyph(theme, activityState(snap));
 }
 
 function statusWord(snap: TerminalSnapshot, theme: Theme) {
-  switch (snap.status) {
-    case "running":
-      return theme.fg("warning", "running");
-    case "done":
-      return theme.fg("success", "done");
-    case "failed":
-      return theme.fg("error", "failed");
-    case "killed":
-      return theme.fg("muted", "killed");
-  }
+  return stateWord(theme, activityState(snap), snap.status);
 }
 
 // --- Entry point ---------------------------------------------------------------
@@ -320,7 +307,7 @@ class TerminalDashboard implements Component {
       const isSelected = index === this.selection.index;
 
       // Left: marker, status square, title, dim id
-      const marker = isSelected ? theme.fg("accent", "❯") : " ";
+      const marker = isSelected ? theme.fg("accent", POINTER) : " ";
       const title = isSelected
         ? theme.fg("accent", oneLine(snap.title))
         : theme.fg("text", oneLine(snap.title));

@@ -4,7 +4,8 @@
  *
  * Tools (for the parent LLM):
  * - subagent_spawn: fire-and-forget spawn (prompt, title, agent, working_dir,
- *   model, reasoning_effort). Max 4 running at once across all backends.
+ *   model, reasoning_effort, isolation). Max 4 running at once across all
+ *   backends. isolation: "worktree" runs the child in its own git worktree.
  * - subagent_wait: block until the listed subagents settle, return results.
  * - subagent_cancel: stop one or more running subagents.
  * - subagent_check: peek at a subagent's status and recent activity.
@@ -34,24 +35,23 @@ import {
   DEFAULT_MAX_LINES,
   formatSize,
   getAgentDir,
-  getMarkdownTheme,
   ProjectTrustStore,
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
-import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { formatActivityStatus } from "../shared/activity-status.ts";
+import { formatContextUtilization } from "../shared/context-utilization.ts";
+import { renderResultCard } from "../shared/result-card.ts";
+import { worktreeHasChanges } from "../shared/worktree.ts";
 import { deriveBtwTitle, isModelVisible } from "./src/by-the-way.ts";
 import {
   BACKEND_NAMES,
   formatElapsed,
+  ISOLATION_MODES,
   latestText,
   REASONING_EFFORTS,
   type SubagentSnapshot,
 } from "./src/domain.ts";
-import {
-  formatActivityStatus,
-  formatContextUtilization,
-} from "./src/format.ts";
 import { SubagentManager, type SubagentManagerShape } from "./src/manager.ts";
 import {
   buildSubagentResultMessage,
@@ -95,7 +95,7 @@ function describeSubagent(snap: SubagentSnapshot) {
     `${snap.backend}: ${snap.meta.modelLabel ?? "?"}`,
     formatContextUtilization(snap.usage),
     formatElapsed(snap),
-    snap.cwd,
+    snap.worktree ? `${snap.cwd} @ ${snap.worktree.branch}` : snap.cwd,
   ].filter(Boolean);
   return `${snap.id} [${snap.status}] "${snap.title}" (${details.join(", ")})`;
 }
@@ -173,11 +173,19 @@ export default function (pi: ExtensionAPI) {
     const done = subs.length - running - failed;
     ui.setStatus(
       "subagents",
-      formatActivityStatus(ui.theme, { running, done, failed }),
+      formatActivityStatus(ui.theme, "subagents", { running, done, failed }),
     );
   };
 
-  const deliverResult = (snap: SubagentSnapshot) => {
+  /** The worktree is only worth mentioning when the child left changes in it. */
+  const changedWorktree = async (snap: SubagentSnapshot) =>
+    snap.worktree && (await worktreeHasChanges(snap.worktree))
+      ? snap.worktree
+      : undefined;
+
+  const deliverResult = async (snap: SubagentSnapshot) => {
+    const worktree = await changedWorktree(snap);
+    if (!sessionContext) return;
     pi.sendMessage(
       {
         customType: "subagent-result",
@@ -187,6 +195,7 @@ export default function (pi: ExtensionAPI) {
           status: snap.status,
           errorText: snap.errorText,
           output: truncatedOutput(snap),
+          worktree,
         }),
         display: true,
         details: { id: snap.id, title: snap.title, status: snap.status },
@@ -195,8 +204,14 @@ export default function (pi: ExtensionAPI) {
     );
   };
 
+  // Deliveries await a git check each, so chain them to keep settlement order.
+  let deliveryChain = Promise.resolve();
   const flushResults = () => {
-    for (const snap of resultDelivery.drain()) deliverResult(snap);
+    for (const snap of resultDelivery.drain()) {
+      deliveryChain = deliveryChain
+        .then(() => deliverResult(snap))
+        .catch(() => undefined);
+    }
   };
 
   const deliverBtwResult = (snap: SubagentSnapshot) => {
@@ -295,6 +310,11 @@ export default function (pi: ExtensionAPI) {
           description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.reasoningEffort,
         }),
       ),
+      isolation: Type.Optional(
+        StringEnum(ISOLATION_MODES, {
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.isolation,
+        }),
+      ),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const manager = await getManager();
@@ -314,6 +334,7 @@ export default function (pi: ExtensionAPI) {
           cwd,
           model: params.model,
           reasoningEffort: params.reasoning_effort,
+          isolation: params.isolation,
           parent: {
             parentCwd: ctx.cwd,
             projectTrusted: resolveChildProjectTrust({
@@ -340,14 +361,16 @@ export default function (pi: ExtensionAPI) {
               title: snap.title,
               harness,
               modelLabel: snap.meta.modelLabel ?? "?",
-              cwd,
+              cwd: snap.cwd,
+              branch: snap.worktree?.branch,
             }),
           },
         ],
         details: {
           id: snap.id,
           title: snap.title,
-          cwd,
+          cwd: snap.cwd,
+          branch: snap.worktree?.branch,
           harness,
           model: snap.meta.modelLabel,
         },
@@ -412,6 +435,10 @@ export default function (pi: ExtensionAPI) {
         const verb = snap.status === "error" ? "failed" : "finished";
         let section = `## ${snap.id} "${snap.title}" ${verb}`;
         if (snap.errorText) section += `\nError: ${snap.errorText}`;
+        const worktree = await changedWorktree(snap);
+        if (worktree) {
+          section += `\nChanges left in worktree ${worktree.path} (branch ${worktree.branch})`;
+        }
         const headerBytes = Buffer.byteLength(section, "utf8") + 2;
         const outputBudget = Math.max(
           512,
@@ -580,43 +607,18 @@ export default function (pi: ExtensionAPI) {
         status?: string;
       };
       const failed = details.status === "error";
-      const icon = failed ? theme.fg("error", "x") : theme.fg("success", "■");
-      const header =
-        `${icon} ` +
-        theme.fg("accent", theme.bold(`subagent ${details.id ?? "?"}`)) +
-        theme.fg(
-          "muted",
-          ` · ${details.title ?? ""} · ${failed ? "failed" : "finished"}`,
-        );
-
       const content =
         typeof message.content === "string" ? message.content : "";
       // Remove only the summary line. The following Error line (when present)
       // is part of the actual result and must remain visible.
       const body = content.split("\n").slice(1).join("\n").trim();
-
-      if (expanded) {
-        const md = new Markdown(`${body}`, 0, 0, getMarkdownTheme());
-        const container = new Text(header, 0, 0);
-        return {
-          render: (width: number) => [
-            ...container.render(width),
-            ...md.render(width),
-          ],
-          invalidate: () => {
-            container.invalidate();
-            md.invalidate();
-          },
-        };
-      }
-
-      const previewLines = body.split("\n").slice(0, 8);
-      let text = header;
-      for (const line of previewLines)
-        text += `\n${theme.fg("toolOutput", line)}`;
-      if (body.split("\n").length > 8)
-        text += `\n${theme.fg("dim", "... (ctrl+o to expand)")}`;
-      return new Text(text, 0, 0);
+      return renderResultCard(theme, {
+        state: failed ? "failed" : "done",
+        title: `subagent ${details.id ?? "?"}`,
+        subtitle: `${details.title ?? ""} · ${failed ? "failed" : "finished"}`,
+        body,
+        expanded,
+      });
     },
   );
 
@@ -625,43 +627,19 @@ export default function (pi: ExtensionAPI) {
     (entry, { expanded }, theme) => {
       const data = entry.data;
       const failed = data?.status === "error";
-      const icon = failed ? theme.fg("error", "x") : theme.fg("success", "■");
-      const header =
-        `${icon} ` +
-        theme.fg("accent", theme.bold(`by the way · ${data?.title ?? "?"}`)) +
-        theme.fg(
-          "muted",
-          ` · ${failed ? "failed" : "answered"} · ${data?.id ?? "?"}`,
-        );
       const body = [
         data?.errorText ? `Error: ${data.errorText}` : "",
         data?.answer ?? "(no answer)",
       ]
         .filter(Boolean)
         .join("\n\n");
-
-      if (expanded) {
-        const md = new Markdown(body, 0, 0, getMarkdownTheme());
-        const container = new Text(header, 0, 0);
-        return {
-          render: (width: number) => [
-            ...container.render(width),
-            ...md.render(width),
-          ],
-          invalidate: () => {
-            container.invalidate();
-            md.invalidate();
-          },
-        };
-      }
-
-      const lines = body.split("\n");
-      let text = header;
-      for (const line of lines.slice(0, 8))
-        text += `\n${theme.fg("toolOutput", line)}`;
-      if (lines.length > 8)
-        text += `\n${theme.fg("dim", "... (ctrl+o to expand)")}`;
-      return new Text(text, 0, 0);
+      return renderResultCard(theme, {
+        state: failed ? "failed" : "done",
+        title: `by the way · ${data?.title ?? "?"}`,
+        subtitle: `${failed ? "failed" : "answered"} · ${data?.id ?? "?"}`,
+        body,
+        expanded,
+      });
     },
   );
 

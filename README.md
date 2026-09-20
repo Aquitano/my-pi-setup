@@ -14,10 +14,11 @@ This setup is fairly opinionated, it:
 - adds firecrawl tools for searching and scraping
 - updates the bottom bar to have the info I prefer to see
 - adds background terminals + ui to manage them
-- adds subagents to pi
+- adds subagents to pi, optionally isolated in their own git worktree
 - adds workflows to pi
-- adds an ask user tool, which lets the model ask multiple choice questions
-- adds first-class `fd` (file discovery) and `rg` (content search) tools
+- adds an ask user tool, which lets the model ask up to four multiple choice questions at once, with multi-select
+- adds first-class `fd` (file discovery) and `rg` (content search) tools, replacing the built-in `find` and `grep`
+- defers the web, background terminal, and workflow tools out of the system prompt until the model loads them with `load_tools`
 
 ![Pi setup interface](assets/pi-setup.jpeg)
 

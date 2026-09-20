@@ -22,7 +22,7 @@ export const WORKFLOW_TOOL_DESCRIPTION = [
   "The script runs as an async function body with these primitives:",
   "• export const meta = { name, description, phases: [{ title, detail? }] } — metadata for the progress UI. Declare all phases up front.",
   "• phase(title) — mark the current phase at runtime (use titles from meta.phases).",
-  "• await agent(prompt, { label?, phase?, schema?, model?, provider?, effort? }) — run ONE subagent in an isolated context and wait for it. Always resolves to { ok, output, structured?, error? }. Check `ok` before using the result. When you pass a JSON `schema`, `structured` holds the validated object on success. `model`/`provider` override the session model; `effort` sets the thinking level (off|minimal|low|medium|high|xhigh|max). Children receive normal built-ins and trust-appropriate extensions, settings, skills, and AGENTS.md context, but cannot recursively orchestrate or ask the user.",
+  "• await agent(prompt, { label?, phase?, schema?, model?, provider?, effort?, isolation? }) — run ONE subagent in an isolated context and wait for it. Always resolves to { ok, output, structured?, error?, worktree? }. Check `ok` before using the result. When you pass a JSON `schema`, `structured` holds the validated object on success. `model`/`provider` override the session model; `effort` sets the thinking level (off|minimal|low|medium|high|xhigh|max). `isolation: 'worktree'` runs the agent in its own git worktree on a fresh branch (checked out from the last commit, without uncommitted changes or ignored files such as node_modules), so parallel agents can edit the same repository without colliding; when it leaves changes, `worktree` holds { path, branch } for a later agent or the final result, and untouched worktrees are removed. Children receive normal built-ins and trust-appropriate extensions, settings, skills, and AGENTS.md context, but cannot recursively orchestrate or ask the user.",
   "• await parallel([() => agent(...), () => agent(...)], { concurrency? }) — run zero-argument agent thunks concurrently and return results in order. Concurrency is globally capped at 4 for the run.",
   "• args — the parsed value of the `args` tool parameter (or undefined).",
   "Workflow JavaScript runs in a restricted, killable child with no imports, eval, timers, filesystem, network, or process APIs. A run may make at most 32 agent calls and has no overall deadline. Each agent must receive its first assistant response event within 45 seconds so silent provider requests fail clearly; after that, agent() has no wall-clock deadline. Each individual child tool call times out independently after 3 minutes, becomes an error tool result, and leaves the agent loop free to recover. Use map/filter/if/await/template strings to orchestrate, and `return` a JSON-serializable aggregate.",
@@ -36,17 +36,8 @@ export const WORKFLOW_TOOL_DESCRIPTION = [
   "phase('Report')",
   "const report = await agent(`Summarize these findings: ${JSON.stringify(findings)}`, { label: 'report', phase: 'Report' })",
   "return { findings, report: report.ok ? report.output : report.error }",
+  "Use workflow when a task needs several subagents with phase dependencies or dynamic fan-out; keep single small delegations in the main session. In workflow scripts, agent() never throws — always check `.ok` on its result before using `.output`/`.structured`.",
 ].join("\n");
-
-/** Adds workflow orchestration primitives and background execution to the model's tool prompt. */
-export const WORKFLOW_PROMPT_SNIPPET =
-  "Orchestrate isolated subagents from an inline JS script: phase()/agent()/parallel() with structured outputs and optional background execution";
-
-/** Guides the model on appropriate workflow fan-out and mandatory agent result checks. */
-export const WORKFLOW_PROMPT_GUIDELINES = [
-  "Use workflow when a task needs several subagents with phase dependencies or dynamic fan-out; keep single small delegations in the main session.",
-  "In workflow scripts, agent() never throws — always check `.ok` on its result before using `.output`/`.structured`.",
-];
 
 /** Marks and forwards a workflow script's agent() task as an isolated child-model prompt. */
 export function buildWorkflowAgentPrompt(prompt: string) {
@@ -86,7 +77,10 @@ export function buildWorkflowResultMessage(
             : "running";
       lines.push(
         `- [${agent.label}]${agent.phase ? ` (${agent.phase})` : ""} ${status}` +
-          (agent.error ? ` — ${agent.error}` : ""),
+          (agent.error ? ` — ${agent.error}` : "") +
+          (agent.worktree
+            ? ` — changes on branch ${agent.worktree.branch} (${agent.worktree.path})`
+            : ""),
       );
     }
   }

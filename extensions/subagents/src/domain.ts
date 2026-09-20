@@ -9,6 +9,7 @@
 
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { Data } from "effect";
+import type { Worktree } from "../../shared/worktree.ts";
 
 export const BACKEND_NAMES = ["pi", "claude", "codex"] as const;
 export type BackendName = (typeof BACKEND_NAMES)[number];
@@ -35,6 +36,9 @@ export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export type SubagentStatus = "running" | "done" | "error";
 
+export const ISOLATION_MODES = ["worktree"] as const;
+export type IsolationMode = (typeof ISOLATION_MODES)[number];
+
 /** Parent-session context resolved by the tool layer and passed opaquely. */
 export interface ParentContext {
   readonly parentCwd: string;
@@ -60,6 +64,8 @@ export interface SpawnTask {
   readonly model?: string;
   /** Shared effort scale; each backend maps it to its native equivalent. */
   readonly reasoningEffort?: ReasoningEffort;
+  /** "worktree" runs the child in a fresh git worktree on its own branch. */
+  readonly isolation?: IsolationMode;
   readonly parent: ParentContext;
 }
 
@@ -196,6 +202,8 @@ export interface SubagentSnapshot {
   readonly title: string;
   readonly prompt: string;
   readonly cwd: string;
+  /** Set when the child runs isolated in its own git worktree. */
+  readonly worktree?: Worktree;
   readonly status: SubagentStatus;
   readonly createdAt: number;
   readonly settledAt?: number;

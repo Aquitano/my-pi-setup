@@ -50,6 +50,7 @@
       "extensions/ask-user/index.ts",
       "extensions/background-terminals/index.ts",
       "extensions/copy-all/index.ts",
+      "extensions/deferred-tools/index.ts",
       "extensions/file-search/index.ts",
       "extensions/firecrawl-search/index.ts",
       "extensions/git-info/index.ts",

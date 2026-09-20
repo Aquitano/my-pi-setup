@@ -24,7 +24,11 @@ import {
 } from "./src/binaries.ts";
 import { formatCapturedOutput, formatOutput } from "./src/output.ts";
 import { executeSearchProcess } from "./src/process.ts";
-import { installNotifications, makeBinaryInitializers } from "./index.ts";
+import {
+  installNotifications,
+  makeBinaryInitializers,
+  withoutSupersededTools,
+} from "./index.ts";
 
 // --- argument construction -------------------------------------------------
 
@@ -440,4 +444,11 @@ it("output: oversized results are truncated and persisted", async () => {
   );
   const shownLines = formatted.text.split("\n");
   assert.equal(shownLines[0], "file-0.ts");
+});
+
+it("active tools: built-in find and grep are dropped, everything else kept", () => {
+  assert.deepEqual(
+    withoutSupersededTools(["read", "grep", "fd", "find", "rg", "bash"]),
+    ["read", "fd", "rg", "bash"],
+  );
 });

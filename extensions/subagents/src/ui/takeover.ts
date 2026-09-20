@@ -14,7 +14,8 @@ import type {
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatElapsed, type SubagentSnapshot } from "../domain.ts";
-import { formatContextUtilization } from "../format.ts";
+import { formatContextUtilization } from "../../../shared/context-utilization.ts";
+import { POINTER, stateGlyph, stateWord } from "../../../shared/glyphs.ts";
 import type { SubagentReadModel } from "../manager.ts";
 import { buildTranscriptLines } from "./transcript.ts";
 
@@ -25,26 +26,16 @@ function configuredKeys(
   return keybindings.getKeys(binding).join("/") || "unbound";
 }
 
-function statusGlyph(snap: SubagentSnapshot, theme: Theme): string {
-  switch (snap.status) {
-    case "running":
-      return theme.fg("warning", "■");
-    case "done":
-      return theme.fg("success", "■");
-    case "error":
-      return theme.fg("error", "■");
-  }
+function activityState(snap: SubagentSnapshot) {
+  return snap.status === "error" ? "failed" : snap.status;
 }
 
-function statusWord(snap: SubagentSnapshot, theme: Theme): string {
-  switch (snap.status) {
-    case "running":
-      return theme.fg("warning", "running");
-    case "done":
-      return theme.fg("success", "done");
-    case "error":
-      return theme.fg("error", "failed");
-  }
+function statusGlyph(snap: SubagentSnapshot, theme: Theme) {
+  return stateGlyph(theme, activityState(snap));
+}
+
+function statusWord(snap: SubagentSnapshot, theme: Theme) {
+  return stateWord(theme, activityState(snap));
 }
 
 // --- Entry points --------------------------------------------------------------
@@ -317,7 +308,7 @@ class SubagentDashboard implements Component {
       const isSelected = index === this.selection.index;
 
       // Left: marker, status square, title, dim id
-      const marker = isSelected ? theme.fg("accent", "❯") : " ";
+      const marker = isSelected ? theme.fg("accent", POINTER) : " ";
       const title = isSelected
         ? theme.fg("accent", snap.title)
         : theme.fg("text", snap.title);

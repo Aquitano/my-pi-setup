@@ -87,6 +87,14 @@ The Pi backend continues to use Pi's own tools and trust settings. These overrid
 
 See [Claude permission modes](https://code.claude.com/docs/en/agent-sdk/permissions) and [Codex App Server](https://developers.openai.com/codex/app-server) for the native behavior.
 
+## Isolate subagents in worktrees
+
+Pass `isolation: "worktree"` to `subagent_spawn`, or `{ isolation: "worktree" }` to a workflow `agent()` call, and the child runs in a fresh git worktree on a branch named `pi/<name>-<id>`. Worktrees live under `~/.pi/agent/worktrees/<repo>/`. The worktree is checked out from the last commit, so uncommitted changes and ignored files such as `node_modules` or `.env` are not present in it. A worktree that ends without edits or commits is removed together with its branch when the subagent is disposed or the workflow agent finishes. A worktree with changes is kept, and the result message names its path and branch so the parent can diff or merge it.
+
+## Deferred tools
+
+The `deferred-tools` extension deactivates the Firecrawl tools, the background terminal tools, and the `workflow` tool at session start, so their descriptions stay out of the system prompt. The model calls `load_tools` with one or more groups (`web`, `terminals`, `workflows`) to activate them for the rest of the session. Groups stay loaded across `/reload`, `/resume`, and `/fork` because the extension re-reads the `load_tools` calls from the transcript. Headless children (subagents and workflow agents) keep every tool active. Edit `extensions/deferred-tools/catalog.ts` to change the groups. Disable the extension with `pi config` to keep every tool active.
+
 ## Keep private state outside the package
 
 Summary model preferences are saved to `~/.pi/agent/summaries.json`. Use `/summary-model` to change them. The old extension-local `config.private.json` remains a read fallback for existing directory installations.

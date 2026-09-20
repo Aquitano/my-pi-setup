@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { stateGlyph } from "../shared/glyphs.ts";
 import { loadSummaryConfig, saveSummaryConfig } from "./src/config.ts";
 import { summarizeRun } from "./src/summarizer.ts";
 import {
@@ -50,7 +51,7 @@ export default function (pi: ExtensionAPI) {
     statusContext?.ui.setStatus(
       STATUS_KEY,
       activeSummaries.size > 0
-        ? statusContext.ui.theme.fg("muted", "✦ summarizing run…")
+        ? `${stateGlyph(statusContext.ui.theme, "running")} ${statusContext.ui.theme.fg("muted", "summarizing run…")}`
         : undefined,
     );
   };

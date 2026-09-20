@@ -7,12 +7,14 @@
  *
  *   export const meta = { name, description, phases: [{ title, detail? }] }
  *   phase(title)                                  // mark runtime phase progression
- *   await agent(prompt, { label?, phase?, schema?, model?, provider?, effort? })
+ *   await agent(prompt, { label?, phase?, schema?, model?, provider?, effort?, isolation? })
  *   await parallel([() => agent(...), ...], { concurrency? })
  *   args                                          // parsed JSON args passed with the tool call
  *
- * `agent()` always resolves to `{ ok, output, structured?, error? }` — it
- * never throws into the script. Scripts branch on `ok` explicitly.
+ * `agent()` always resolves to `{ ok, output, structured?, error?, worktree? }`
+ * — it never throws into the script. Scripts branch on `ok` explicitly.
+ * `isolation: "worktree"` runs that agent in its own git worktree; `worktree`
+ * is set when it left changes behind.
  *
  * Runs are blocking by default (live progress in the tool block). Pass
  * `background: true` to return immediately and get a follow-up message when
@@ -34,6 +36,10 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { formatActivityStatus } from "../shared/activity-status.ts";
+import {
+  createWorktree,
+  removeWorktreeIfUnchanged,
+} from "../shared/worktree.ts";
 import { createWorkflowPersistence, persistWorkflowJson } from "./artifacts.ts";
 import { RunController } from "./controller.ts";
 import { sessionWorkflowRunIds, showWorkflowDashboard } from "./dashboard.ts";
@@ -64,8 +70,6 @@ import {
   buildWorkflowAgentPrompt,
   buildWorkflowResultMessage,
   WORKFLOW_PARAMETER_DESCRIPTIONS,
-  WORKFLOW_PROMPT_GUIDELINES,
-  WORKFLOW_PROMPT_SNIPPET,
   WORKFLOW_TOOL_DESCRIPTION,
 } from "./prompt.ts";
 import {
@@ -96,6 +100,8 @@ interface ScriptAgentResult {
   output: string;
   structured?: unknown;
   error?: string;
+  /** Present when the agent ran isolated and left changes behind. */
+  worktree?: { path: string; branch: string };
 }
 
 interface AgentCallOptions {
@@ -105,6 +111,7 @@ interface AgentCallOptions {
   model?: unknown;
   provider?: unknown;
   effort?: unknown;
+  isolation?: unknown;
 }
 
 const WorkflowParams = Type.Object({
@@ -368,8 +375,6 @@ export default function workflows(pi: ExtensionAPI) {
     name: "workflow",
     label: "Workflow",
     description: WORKFLOW_TOOL_DESCRIPTION,
-    promptSnippet: WORKFLOW_PROMPT_SNIPPET,
-    promptGuidelines: WORKFLOW_PROMPT_GUIDELINES,
     parameters: WorkflowParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -419,9 +424,9 @@ export default function workflows(pi: ExtensionAPI) {
       // Each concurrent child gets its own extension runtime. All children use
       // the parent cwd and live trust decision.
       const projectTrusted = ctx.isProjectTrusted();
-      const getResources = (structured: boolean) =>
+      const getResources = (structured: boolean, cwd: string) =>
         createWorkflowResources(
-          ctx.cwd,
+          cwd,
           structured ? "structured" : "plain",
           projectTrusted,
         );
@@ -513,6 +518,7 @@ export default function workflows(pi: ExtensionAPI) {
         if (controller.signal.aborted)
           return fail("Workflow was aborted before this agent started");
 
+        let cleanupError: string | undefined;
         return controller
           .schedule(async (runSignal) => {
             // Model/provider resolution: default to the parent session's model.
@@ -567,56 +573,114 @@ export default function workflows(pi: ExtensionAPI) {
               thinkingLevel = effort as ThinkingLevel;
             }
 
-            const resources = await getResources(opts.schema !== undefined);
-            const outcome = await runAgent({
-              prompt,
-              schema: opts.schema,
-              model,
-              thinkingLevel,
-              cwd: ctx.cwd,
-              loader: resources.loader,
-              settingsManager: resources.settingsManager,
-              modelRegistry: ctx.modelRegistry,
-              signal: runSignal,
-              onProgress: (progress) => {
-                record.preview = progress.preview.slice(0, PREVIEW_LENGTH);
-                record.usage = progress.usage;
-                record.model = progress.model ?? record.model;
-                record.contextWindow =
-                  progress.contextWindow ?? record.contextWindow;
-                record.transcript = progress.transcript;
-                emit();
-              },
-            });
-
-            record.usage = outcome.usage;
-            record.model = outcome.model ?? record.model;
-            record.contextWindow =
-              outcome.contextWindow ?? record.contextWindow;
-            record.transcript = outcome.transcript;
-            record.preview = (outcome.output || record.preview).slice(
-              0,
-              PREVIEW_LENGTH,
-            );
-            record.finishedAt = Date.now();
-            record.state = outcome.ok ? "done" : "error";
-            if (outcome.ok) {
-              delete record.error;
-            } else {
-              record.error = outcome.error ?? "Agent failed";
+            if (opts.isolation !== undefined && opts.isolation !== "worktree") {
+              return fail(
+                `agent "${label}": invalid isolation "${String(opts.isolation)}" (use "worktree")`,
+              );
             }
-            emit();
+            let cwd = ctx.cwd;
+            let worktree:
+              Awaited<ReturnType<typeof createWorktree>> | undefined;
+            if (opts.isolation === "worktree") {
+              worktree = await createWorktree({ cwd: ctx.cwd, name: label });
+              if (!worktree.ok) {
+                return fail(
+                  `agent "${label}": cannot create worktree: ${worktree.error}`,
+                );
+              }
+              cwd = worktree.worktree.path;
+              record.worktree = {
+                path: worktree.worktree.path,
+                branch: worktree.worktree.branch,
+              };
+              emit();
+            }
 
-            return {
-              ok: outcome.ok,
-              output: outcome.output,
-              ...(outcome.structured !== undefined
-                ? { structured: outcome.structured }
-                : {}),
-              ...(outcome.error !== undefined ? { error: outcome.error } : {}),
-            };
+            try {
+              const resources = await getResources(
+                opts.schema !== undefined,
+                cwd,
+              );
+              const outcome = await runAgent({
+                prompt,
+                schema: opts.schema,
+                model,
+                thinkingLevel,
+                cwd,
+                loader: resources.loader,
+                settingsManager: resources.settingsManager,
+                modelRegistry: ctx.modelRegistry,
+                signal: runSignal,
+                onProgress: (progress) => {
+                  record.preview = progress.preview.slice(0, PREVIEW_LENGTH);
+                  record.usage = progress.usage;
+                  record.model = progress.model ?? record.model;
+                  record.contextWindow =
+                    progress.contextWindow ?? record.contextWindow;
+                  record.transcript = progress.transcript;
+                  emit();
+                },
+              });
+
+              record.usage = outcome.usage;
+              record.model = outcome.model ?? record.model;
+              record.contextWindow =
+                outcome.contextWindow ?? record.contextWindow;
+              record.transcript = outcome.transcript;
+              record.preview = (outcome.output || record.preview).slice(
+                0,
+                PREVIEW_LENGTH,
+              );
+              record.finishedAt = Date.now();
+              record.state = outcome.ok ? "done" : "error";
+              if (outcome.ok) {
+                delete record.error;
+              } else {
+                record.error = outcome.error ?? "Agent failed";
+              }
+              return {
+                ok: outcome.ok,
+                output: outcome.output,
+                ...(outcome.structured !== undefined
+                  ? { structured: outcome.structured }
+                  : {}),
+                ...(outcome.error !== undefined
+                  ? { error: outcome.error }
+                  : {}),
+              };
+            } finally {
+              // Runs on every exit, including a throw from resource loading
+              // or an abort, so an isolated agent never leaks its worktree.
+              if (worktree?.ok) {
+                const removal = await removeWorktreeIfUnchanged(
+                  worktree.worktree,
+                );
+                if (removal.removed) delete record.worktree;
+                else if (removal.error) {
+                  cleanupError = `worktree cleanup failed: ${removal.error}`;
+                  record.state = "error";
+                  record.error = record.error
+                    ? `${record.error}; ${cleanupError}`
+                    : cleanupError;
+                }
+              }
+              emit();
+            }
           }, invocationSignal)
-          .catch((error) => fail(errorText(error)));
+          .catch((error) => fail(errorText(error)))
+          .then((result): ScriptAgentResult => {
+            const withWorktree = record.worktree
+              ? { ...result, worktree: record.worktree }
+              : result;
+            if (!cleanupError) return withWorktree;
+            return {
+              ...withWorktree,
+              ok: false,
+              error: withWorktree.error
+                ? `${withWorktree.error}; ${cleanupError}`
+                : cleanupError,
+            };
+          });
       };
 
       const runScript = async () => {
