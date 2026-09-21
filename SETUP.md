@@ -55,6 +55,10 @@ FIRECRAWL_API_KEY=fc-YOUR-API-KEY
 
 If you do not use Firecrawl, disable `firecrawl-search` with `pi config`.
 
+## Configure settings in Pi
+
+Run `/setup` in the Pi TUI to change Claude and Codex permission modes, the shared agent limit, and run recaps (on/off, model, reasoning level). Each choice saves immediately, and Escape cancels the current picker. Permission changes apply to new subagents, limit changes to the next admission, and recap changes to future completed runs. Settings live in your agent directory, outside the installed package. `/summary-model` still works and keeps the recap on/off setting.
+
 ## Configure subagent permissions
 
 Claude and Codex use automatic permission review by default. Install and authenticate the corresponding CLI before launching its subagents. Keep both CLIs current. Claude's headless permission handling requires Claude Code 2.1.259 or newer, and auto mode also depends on model and account availability.

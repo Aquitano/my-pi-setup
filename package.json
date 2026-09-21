@@ -57,6 +57,7 @@
       "extensions/firecrawl-search/index.ts",
       "extensions/git-info/index.ts",
       "extensions/model-info/index.ts",
+      "extensions/settings/index.ts",
       "extensions/spark-strict-tools/index.ts",
       "extensions/subagents/index.ts",
       "extensions/summaries/index.ts",

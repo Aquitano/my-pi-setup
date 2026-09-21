@@ -90,6 +90,17 @@ export async function openModelPicker(
   return selected === undefined ? undefined : models[labels.indexOf(selected)];
 }
 
+export async function chooseSummaryModel(
+  ctx: ExtensionCommandContext,
+  current: SummaryConfig,
+) {
+  const model = await openModelPicker(ctx, current);
+  if (!model) return undefined;
+  const reasoning = await openReasoningPicker(ctx, model, current.reasoning);
+  if (!reasoning) return undefined;
+  return { ...current, provider: model.provider, model: model.id, reasoning };
+}
+
 export function openReasoningPicker(
   ctx: ExtensionCommandContext,
   model: Model<Api>,

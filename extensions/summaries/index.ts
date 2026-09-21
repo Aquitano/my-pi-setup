@@ -12,8 +12,7 @@ import {
   serializeRunTranscript,
 } from "./src/transcript.ts";
 import {
-  openModelPicker,
-  openReasoningPicker,
+  chooseSummaryModel,
   renderRecap,
   type RecapEntryData,
 } from "./src/ui.ts";
@@ -83,6 +82,7 @@ export default function (pi: ExtensionAPI) {
     if (entries.length === 0) return;
 
     const config = loadSummaryConfig();
+    if (config.enabled === false) return;
     const controller = new AbortController();
     statusContext = ctx;
     const task = (async () => {
@@ -150,22 +150,9 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const current = loadSummaryConfig();
-      const model = await openModelPicker(ctx, current);
-      if (!model) return;
+      const config = await chooseSummaryModel(ctx, loadSummaryConfig());
+      if (!config) return;
 
-      const reasoning = await openReasoningPicker(
-        ctx,
-        model,
-        current.reasoning,
-      );
-      if (!reasoning) return;
-
-      const config = {
-        provider: model.provider,
-        model: model.id,
-        reasoning,
-      };
       try {
         await saveSummaryConfig(config);
       } catch {

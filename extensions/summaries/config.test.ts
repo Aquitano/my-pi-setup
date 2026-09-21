@@ -38,3 +38,12 @@ test("summary config accepts valid private overrides and rejects partial corrupt
     DEFAULT_SUMMARY_CONFIG,
   );
 });
+
+test("summary configuration preserves an explicit opt-out", () => {
+  const value = parseSummaryConfig({
+    ...DEFAULT_SUMMARY_CONFIG,
+    enabled: false,
+  });
+  assert.equal(value.enabled, false);
+  assert.equal(parseSummaryConfig(DEFAULT_SUMMARY_CONFIG).enabled, undefined);
+});

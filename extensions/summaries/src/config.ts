@@ -1,15 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Data, Effect } from "effect";
-
-class ConfigWriteError extends Data.TaggedError("ConfigWriteError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+import { writeUserConfig } from "../../shared/user-config.ts";
 
 export const REASONING_LEVELS = [
   "off",
@@ -24,6 +17,7 @@ export const REASONING_LEVELS = [
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
 export interface SummaryConfig {
+  readonly enabled?: boolean;
   readonly provider: string;
   readonly model: string;
   readonly reasoning: ReasoningLevel;
@@ -60,6 +54,7 @@ export function parseSummaryConfig(value: unknown) {
   }
 
   return {
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
     provider: value.provider.trim(),
     model: value.model.trim(),
     reasoning: value.reasoning,
@@ -79,29 +74,6 @@ export function loadSummaryConfig() {
   return DEFAULT_SUMMARY_CONFIG;
 }
 
-export function saveSummaryConfig(config: SummaryConfig, signal?: AbortSignal) {
-  const tempPath = `${PRIVATE_CONFIG_PATH}.${process.pid}.${randomUUID()}.tmp`;
-  const write = Effect.tryPromise({
-    try: async (effectSignal) => {
-      await mkdir(dirname(PRIVATE_CONFIG_PATH), { recursive: true });
-      try {
-        await writeFile(tempPath, `${JSON.stringify(config, null, 2)}\n`, {
-          encoding: "utf8",
-          mode: 0o600,
-          signal: effectSignal,
-        });
-        await rename(tempPath, PRIVATE_CONFIG_PATH);
-      } catch (error) {
-        await unlink(tempPath).catch(() => undefined);
-        throw error;
-      }
-    },
-    catch: (cause) =>
-      new ConfigWriteError({
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-  }).pipe(Effect.timeout("5 seconds"));
-
-  return Effect.runPromise(write, signal ? { signal } : undefined);
+export function saveSummaryConfig(config: SummaryConfig) {
+  return writeUserConfig(PRIVATE_CONFIG_PATH, config);
 }
