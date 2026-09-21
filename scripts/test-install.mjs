@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import {
   copyFile,
@@ -16,6 +17,14 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+const piRequire = createRequire(
+  import.meta.resolve("@earendil-works/pi-coding-agent"),
+);
+const { createJiti } = piRequire("jiti");
+const jiti = createJiti(import.meta.url, {
+  moduleCache: false,
+  tryNative: false,
+});
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const temporary = await mkdtemp(join(tmpdir(), "pi-install-test-"));
 const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -64,6 +73,20 @@ async function loadPackage(packagePath, label) {
     loader
       .getThemes()
       .themes.some((theme) => theme.name === "github-dark-default"),
+  );
+  const { runWorkflowSandbox } = await jiti.import(
+    join(packagePath, "extensions/workflows/sandbox.ts"),
+  );
+  assert.equal(
+    await runWorkflowSandbox({
+      source: 'return (await agent("smoke")).output;',
+      args: undefined,
+      cwd,
+      signal: AbortSignal.timeout(10_000),
+      onAgent: async () => ({ ok: true, output: "installed sandbox works" }),
+      onPhase: () => {},
+    }),
+    "installed sandbox works",
   );
   console.log(
     `${label}: loaded ${loaded.extensions.length} extensions, 2 skills, and the theme`,

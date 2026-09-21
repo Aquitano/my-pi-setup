@@ -155,3 +155,9 @@ npm run test:install -- --min-release-age=0
 ```
 
 The package does not change your global npm settings. A release-age policy, unavailable registry, or unsupported Node version can still prevent installation.
+
+### Workflow isolation
+
+Workflow scripts run in a QuickJS interpreter compiled to WebAssembly, inside a separate Node process with restricted filesystem permissions. Only JSON crosses the `agent()` and `phase()` bridge. The interpreter ships with the package.
+
+Each uninterrupted execution slice, including promise callbacks, may run for one second. Waiting for an agent does not count. The interpreter's WebAssembly memory is capped at 128 MiB. Source, arguments, results, agent requests (32 per run) and phase updates (256 per run) are bounded. Cancellation terminates the worker and aborts its outstanding agent requests.
