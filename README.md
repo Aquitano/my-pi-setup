@@ -19,6 +19,7 @@ This setup is fairly opinionated, it:
 - adds an ask user tool, which lets the model ask up to four multiple choice questions at once, with multi-select
 - adds first-class `fd` (file discovery) and `rg` (content search) tools, replacing the built-in `find` and `grep`
 - defers the web, background terminal, and workflow tools out of the system prompt until the model loads them with `load_tools`
+- adds a `/setup` command to change subagent permissions, the shared agent limit, and run recaps from the TUI
 
 ![Pi setup interface](assets/pi-setup.jpeg)
 
