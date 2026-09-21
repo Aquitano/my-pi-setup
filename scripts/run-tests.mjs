@@ -1,5 +1,7 @@
-import { readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const live = process.argv.includes("--live");
 const liveTests = new Set(["claude.test.ts", "codex.test.ts"]);
@@ -17,6 +19,10 @@ const result = spawnSync(
   ["--test", "--experimental-strip-types", ...tests],
   {
     stdio: "inherit",
+    env: {
+      ...process.env,
+      PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "pi-test-agent-")),
+    },
   },
 );
 if (result.error) throw result.error;

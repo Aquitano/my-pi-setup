@@ -95,6 +95,16 @@ Pass `isolation: "worktree"` to `subagent_spawn`, or `{ isolation: "worktree" }`
 
 The `deferred-tools` extension deactivates the Firecrawl tools, the background terminal tools, and the `workflow` tool at session start, so their descriptions stay out of the system prompt. The model calls `load_tools` with one or more groups (`web`, `terminals`, `workflows`) to activate them for the rest of the session. Groups stay loaded across `/reload`, `/resume`, and `/fork` because the extension re-reads the `load_tools` calls from the transcript. Headless children (subagents and workflow agents) keep every tool active. Edit `extensions/deferred-tools/catalog.ts` to change the groups. Disable the extension with `pi config` to keep every tool active.
 
+## Shared agent concurrency
+
+Workflow agents and Pi, Claude, and Codex subagents share one running-agent budget per Pi process. The default is four. Set `maxRunning` (1 to 32) in `~/.pi/agent/concurrency.json` (or under `PI_CODING_AGENT_DIR`):
+
+```json
+{ "maxRunning": 4 }
+```
+
+Workflow agents wait in arrival order when the budget is full, and cancelled calls leave the queue. Subagent spawns and idle restarts fail with a capacity error instead of waiting. Each workflow run also keeps its own fan-out limit of four. Edits to the file apply on the next admission, and lowering the limit lets running agents finish.
+
 ## Keep private state outside the package
 
 Summary model preferences are saved to `~/.pi/agent/summaries.json`. Use `/summary-model` to change them. The old extension-local `config.private.json` remains a read fallback for existing directory installations.
