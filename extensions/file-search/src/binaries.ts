@@ -12,7 +12,8 @@
  * network. `liveBinaryEnv` is the real implementation.
  */
 
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";

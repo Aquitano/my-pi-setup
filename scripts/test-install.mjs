@@ -30,6 +30,8 @@ const temporary = await mkdtemp(join(tmpdir(), "pi-install-test-"));
 const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const npmCli = process.env.npm_execpath;
 assert.ok(npmCli, "Run this check with npm run test:install");
+// Pi installs packages with these flags, so peer dependencies are never installed.
+const piInstall = ["install", "--omit=dev", "--legacy-peer-deps"];
 
 function npm(args, cwd) {
   const result = spawnSync(
@@ -119,7 +121,7 @@ try {
     join(root, "package-lock.json"),
     join(checkout, "package-lock.json"),
   );
-  npm(["ci", "--omit=dev"], checkout);
+  npm(piInstall, checkout);
   await loadPackage(checkout, "clean production checkout");
 
   // Pi runs npm install for Git packages, including on repeat installation.
@@ -127,7 +129,7 @@ try {
     join(checkout, "package-lock.json"),
     "utf8",
   );
-  npm(["install", "--omit=dev"], checkout);
+  npm(piInstall, checkout);
   assert.equal(
     await readFile(join(checkout, "package-lock.json"), "utf8"),
     lockBefore,
@@ -152,7 +154,7 @@ try {
       },
     }),
   );
-  npm(["install", "--omit=dev"], consumer);
+  npm(piInstall, consumer);
   await loadPackage(
     join(consumer, "node_modules", manifest.name),
     "packed plugin",
