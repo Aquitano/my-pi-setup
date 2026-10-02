@@ -202,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "bg_start",
+    exposure: "deferred",
     label: "Start Background Terminal",
     description: BG_START_TOOL_DESCRIPTION,
     parameters: Type.Object({
@@ -246,6 +247,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "bg_status",
+    exposure: "deferred",
     label: "Check Background Terminal",
     description: BG_STATUS_TOOL_DESCRIPTION,
     parameters: Type.Object({
@@ -280,6 +282,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "bg_list",
+    exposure: "deferred",
     label: "List Background Terminals",
     description: BG_LIST_TOOL_DESCRIPTION,
     parameters: Type.Object({}),
@@ -306,6 +309,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "bg_kill",
+    exposure: "deferred",
     label: "Kill Background Terminals",
     description: BG_KILL_TOOL_DESCRIPTION,
     parameters: Type.Object({

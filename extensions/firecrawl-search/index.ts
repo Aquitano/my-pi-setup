@@ -229,6 +229,7 @@ async function runFirecrawl<T>(
 export default function firecrawlTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "search",
+    exposure: "deferred",
     label: "Search Web",
     description: SEARCH_TOOL_DESCRIPTION,
     parameters: Type.Object({
@@ -272,6 +273,7 @@ export default function firecrawlTools(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "crawl",
+    exposure: "deferred",
     label: "Crawl Website",
     description: CRAWL_TOOL_DESCRIPTION,
     parameters: Type.Object({
@@ -351,6 +353,7 @@ export default function firecrawlTools(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "scrape",
+    exposure: "deferred",
     label: "Scrape Page",
     description: SCRAPE_TOOL_DESCRIPTION,
     parameters: Type.Object({

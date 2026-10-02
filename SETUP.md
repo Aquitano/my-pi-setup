@@ -97,7 +97,7 @@ Pass `isolation: "worktree"` to `subagent_spawn`, or `{ isolation: "worktree" }`
 
 ## Deferred tools
 
-The `deferred-tools` extension deactivates the Firecrawl tools, the background terminal tools, and the `workflow` tool at session start, so their descriptions stay out of the system prompt. The model calls `load_tools` with one or more groups (`web`, `terminals`, `workflows`) to activate them for the rest of the session. Groups stay loaded across `/reload`, `/resume`, and `/fork` because the extension re-reads the `load_tools` calls from the transcript. Headless children (subagents and workflow agents) keep every tool active. Edit `extensions/deferred-tools/catalog.ts` to change the groups. Disable the extension with `pi config` to keep every tool active.
+The Firecrawl tools, the background terminal tools, and the `workflow` tool register with `exposure: "deferred"`, so their descriptions stay out of the system prompt. The `deferred-tools` extension turns on pi's built-in `tool_search` and adds one guideline that names the deferred tools. The model loads a tool with `tool_search`, and pi keeps it loaded across `/reload`, `/resume`, and `/fork`. Headless children (subagents and workflow agents) have no `tool_search`, so they start with every deferred tool active. To defer another tool, set `exposure: "deferred"` where it is registered. If you disable `deferred-tools` with `pi config`, add `"defaultTools": ["+tool_search"]` to your settings so the deferred tools stay reachable.
 
 ## Shared agent concurrency
 

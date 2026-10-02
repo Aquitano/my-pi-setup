@@ -373,6 +373,7 @@ export default function workflows(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "workflow",
+    exposure: "deferred",
     label: "Workflow",
     description: WORKFLOW_TOOL_DESCRIPTION,
     parameters: WorkflowParams,
