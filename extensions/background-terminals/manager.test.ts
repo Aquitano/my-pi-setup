@@ -23,9 +23,10 @@ import { createTerminalRuntime, runTool } from "./src/runtime.ts";
 
 const cwd = process.cwd();
 
-/** Quote a `node -e` script for sh -c. */
+/** Quote a `node -e` script for both sh -c and cmd.exe, which only share double quotes.
+ * Scripts must use single quotes inside. */
 function nodeCmd(script: string) {
-  return `node -e '${script}'`;
+  return `node -e "${script}"`;
 }
 
 async function withManager(
@@ -93,7 +94,7 @@ test("happy path: stdout and stderr captured separately, settles done, hook fire
       runtime,
       manager.start({
         command: nodeCmd(
-          'process.stdout.write("out-line\\n"); process.stderr.write("err-line\\n");',
+          "process.stdout.write('out-line\\n'); process.stderr.write('err-line\\n');",
         ),
         title: "happy",
         cwd,
@@ -172,10 +173,13 @@ test("kill settles a never-exiting process as killed and resolves after settle; 
     assert.equal(report[0].status, "killed");
     assert.equal(report[0].killed, true);
     assert.equal(report[0].wasRunning, true);
-    assert.match(report[0].exit, /^SIG/);
     const after = manager.view.get(snap.id);
     assert.equal(after?.status, "killed");
-    assert.ok(after?.signal);
+    // taskkill ends a Windows process with an exit code, not a signal.
+    if (process.platform !== "win32") {
+      assert.match(report[0].exit, /^SIG/);
+      assert.ok(after?.signal);
+    }
 
     const second = await runTool(runtime, manager.kill([snap.id]));
     assert.equal(second[0].killed, false);
@@ -193,7 +197,7 @@ test(
         runtime,
         manager.start({
           command: `exec ${nodeCmd(
-            'process.on("SIGTERM", () => process.stdout.write("term\\n")); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);',
+            "process.on('SIGTERM', () => process.stdout.write('term\\n')); process.stdout.write('ready\\n'); setInterval(() => {}, 1000);",
           )}`,
           title: "term-resistant",
           cwd,
@@ -431,7 +435,10 @@ test("concurrency cap rejects an extra start; a failed spawn releases its slot",
     );
     assert.equal(spawns.length, MAX_RUNNING);
     await assert.rejects(
-      runTool(runtime, manager.start({ command: "true", title: "extra", cwd })),
+      runTool(
+        runtime,
+        manager.start({ command: "exit 0", title: "extra", cwd }),
+      ),
       new RegExp(`Max ${MAX_RUNNING} background terminals`),
     );
 
@@ -528,7 +535,7 @@ test("runtime.dispose kills running processes; no settle hook fires after dispos
   // start after dispose is rejected (by the runtime itself, or by the
   // manager's disposed guard if the effect still runs).
   await assert.rejects(
-    runTool(runtime, manager.start({ command: "true", title: "late", cwd })),
+    runTool(runtime, manager.start({ command: "exit 0", title: "late", cwd })),
     /shutting down|disposed/,
   );
 });
@@ -548,7 +555,7 @@ test("pruning drops the oldest settled entries past MAX_TRACKED, never running o
     for (let i = 0; i < MAX_TRACKED + 4; i++) {
       const snap = await runTool(
         runtime,
-        manager.start({ command: "true", title: `quick-${i}`, cwd }),
+        manager.start({ command: "exit 0", title: `quick-${i}`, cwd }),
       );
       settledIds.push(snap.id);
       await settlement(manager, snap.id);
@@ -613,7 +620,7 @@ test("a process 'error' event settles failed with errorText and no bogus exit co
     const snap = await runTool(
       runtime,
       manager.start({
-        command: "true",
+        command: "exit 0",
         title: "bad-cwd",
         cwd: "/definitely/not/a/real/dir-12345",
       }),
@@ -650,7 +657,7 @@ test("the spill file holds the complete capture when the settle hook fires, beyo
       runtime,
       manager.start({
         command: nodeCmd(
-          `const s = "x".repeat(${chunk}); for (let i = 0; i < ${writes}; i++) process.stdout.write(s);`,
+          `const s = 'x'.repeat(${chunk}); for (let i = 0; i < ${writes}; i++) process.stdout.write(s);`,
         ),
         title: "firehose",
         cwd,
@@ -685,7 +692,7 @@ test("aborting the kill wait does not cancel the termination", async () => {
           process.platform === "win32"
             ? nodeCmd("setInterval(() => {}, 1000)")
             : `exec ${nodeCmd(
-                'process.on("SIGTERM", () => process.stdout.write("term\\n")); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);',
+                "process.on('SIGTERM', () => process.stdout.write('term\\n')); process.stdout.write('ready\\n'); setInterval(() => {}, 1000);",
               )}`,
         title: "abort-race",
         cwd,
@@ -723,7 +730,7 @@ test("status returns the snapshot and rejects unknown ids with the known list", 
   await withManager(async (manager, runtime) => {
     const snap = await runTool(
       runtime,
-      manager.start({ command: "true", title: "status", cwd }),
+      manager.start({ command: "exit 0", title: "status", cwd }),
     );
     const seen = await runTool(runtime, manager.status(snap.id));
     assert.equal(seen.id, snap.id);

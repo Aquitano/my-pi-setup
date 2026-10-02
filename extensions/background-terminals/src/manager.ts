@@ -171,7 +171,14 @@ export class TerminalManager extends Context.Service<
 function shellInvocation(command: string) {
   if (process.platform === "win32") {
     const shell = process.env.ComSpec ?? "cmd.exe";
-    return { shell, args: ["/d", "/s", "/c", command] };
+    // Node would escape the command's double quotes as \", which cmd.exe
+    // passes on literally. Like Node's own `shell: true`, wrap the command
+    // verbatim and let /s strip the outer quotes.
+    return {
+      shell,
+      args: ["/d", "/s", "/c", `"${command}"`],
+      windowsVerbatimArguments: true,
+    };
   }
   return { shell: "/bin/sh", args: ["-c", command] };
 }
@@ -181,14 +188,11 @@ function shellInvocation(command: string) {
 function killTree(child: ChildProcess, signal: NodeJS.Signals) {
   if (process.platform === "win32" && child.pid) {
     try {
+      // Always /F: without it taskkill fails for console programs, and the
+      // fallback below would kill only the shell, orphaning its command.
       const killer = spawn(
         "taskkill",
-        [
-          "/pid",
-          String(child.pid),
-          "/T",
-          ...(signal === "SIGKILL" ? ["/F"] : []),
-        ],
+        ["/pid", String(child.pid), "/T", "/F"],
         { stdio: "ignore", windowsHide: true },
       );
       killer.once("error", () => {
@@ -553,10 +557,13 @@ const makeManager = Effect.gen(function* () {
       );
 
       const doStart = Effect.gen(function* () {
-        const { shell, args } = shellInvocation(options.command);
+        const { shell, args, windowsVerbatimArguments } = shellInvocation(
+          options.command,
+        );
         const child = yield* Effect.try({
           try: () =>
             spawn(shell, args, {
+              windowsVerbatimArguments,
               cwd: options.cwd,
               env: process.env,
               // stdin IGNORED: there is no input surface, ever. A process
