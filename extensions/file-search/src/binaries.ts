@@ -19,9 +19,10 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { Crypto, Data, Effect, Encoding, FileSystem, Stream } from "effect";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Crypto, Data, Effect, FileSystem, Stream } from "effect";
+import { Hex } from "effect/encoding";
+import { FetchHttpClient, HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const execFileAsync = promisify(execFile);
 
@@ -357,7 +358,7 @@ export const liveBinaryEnv: BinaryEnv = {
       );
 
       const digestBytes = yield* crypto.digest("SHA-256", bytes);
-      const digest = Encoding.encodeHex(digestBytes);
+      const digest = Hex.encode(digestBytes);
       if (digest !== asset.sha256) {
         return yield* Effect.fail(
           new Error(
