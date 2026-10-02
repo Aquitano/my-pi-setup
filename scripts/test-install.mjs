@@ -40,7 +40,8 @@ function npm(args, cwd) {
     {
       cwd,
       encoding: "utf8",
-      timeout: 180_000,
+      // A fresh install takes over three minutes on GitHub's Windows runners.
+      timeout: 600_000,
       maxBuffer: 4 * 1024 * 1024,
     },
   );
