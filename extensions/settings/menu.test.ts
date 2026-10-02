@@ -77,7 +77,9 @@ test("settings menu persists permissions, live capacity, and recap preferences",
     model: "test-model",
     reasoning: "low",
   });
-  assert.equal(statSync(join(dir, "subagents.json")).mode & 0o777, 0o600);
+  if (process.platform !== "win32") {
+    assert.equal(statSync(join(dir, "subagents.json")).mode & 0o777, 0o600);
+  }
   assert.equal(
     readdirSync(dir).some((name) => name.endsWith(".tmp")),
     false,

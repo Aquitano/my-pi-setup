@@ -216,9 +216,12 @@ it.effect("binary resolution: fdfind is accepted as a system fd", () =>
   }),
 );
 
+// The resolver joins paths with the host separator.
+const bundledRg = join("/repo/bin", "rg");
+
 it.effect("binary resolution: existing bin fallback is used silently", () =>
   Effect.gen(function* () {
-    const env = makeEnv({ available: ["/repo/bin/rg"] });
+    const env = makeEnv({ available: [bundledRg] });
     const resolved = yield* resolveBinary(
       TOOL_SPECS.rg,
       "/repo/bin",
@@ -228,7 +231,7 @@ it.effect("binary resolution: existing bin fallback is used silently", () =>
 
     assert.deepEqual(resolved, {
       tool: "rg",
-      command: "/repo/bin/rg",
+      command: bundledRg,
       source: "bundled",
     });
     assert.equal(env.installs.length, 0);
@@ -248,7 +251,7 @@ it.effect(
       );
 
       assert.equal(resolved.source, "installed");
-      assert.equal(resolved.command, "/repo/bin/rg");
+      assert.equal(resolved.command, bundledRg);
       assert.equal(env.installs.length, 1);
       assert.match(
         env.installs[0].url,
