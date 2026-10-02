@@ -6,7 +6,7 @@ Install as a Pi package from GitHub:
 pi install git:github.com/Aquitano/my-pi-setup
 ```
 
-For your own fork, replace `Aquitano` with your GitHub username. Requires Pi 0.82 or newer and Node.js 24.16 or newer. Run `/reload` in Pi after installation.
+For your own fork, replace `Aquitano` with your GitHub username. Requires Pi 1.0 or newer and Node.js 24.16 or newer. Run `/reload` in Pi after installation.
 
 This setup is fairly opinionated, it:
 

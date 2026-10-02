@@ -1,6 +1,6 @@
 # Set up the Pi package
 
-Use Pi 0.82 or newer with Node.js 24.16 or newer.
+Use Pi 1.0 or newer with Node.js 24.16 or newer.
 
 ## Install from GitHub
 
